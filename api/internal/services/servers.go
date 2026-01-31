@@ -36,7 +36,7 @@ type CreateServerResult struct {
 // List returns all servers for an organization
 func (s *ServerService) List(ctx context.Context, orgID uuid.UUID) ([]models.Server, error) {
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, organization_id, hostname, ip_address, status, last_seen, agent_version, created_at, updated_at
+		`SELECT id, organization_id, hostname, COALESCE(ip_address::text, ''), status, last_seen, agent_version, created_at, updated_at
 		 FROM servers WHERE organization_id = $1 ORDER BY hostname`, orgID)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func (s *ServerService) List(ctx context.Context, orgID uuid.UUID) ([]models.Ser
 func (s *ServerService) Get(ctx context.Context, orgID, serverID uuid.UUID) (*models.Server, error) {
 	var server models.Server
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, organization_id, hostname, ip_address, status, last_seen, agent_version, created_at, updated_at
+		`SELECT id, organization_id, hostname, COALESCE(ip_address::text, ''), status, last_seen, agent_version, created_at, updated_at
 		 FROM servers WHERE id = $1 AND organization_id = $2`, serverID, orgID).Scan(
 		&server.ID, &server.OrganizationID, &server.Hostname, &server.IPAddress,
 		&server.Status, &server.LastSeen, &server.AgentVersion, &server.CreatedAt, &server.UpdatedAt)
@@ -127,7 +127,7 @@ func (s *ServerService) Delete(ctx context.Context, orgID, serverID uuid.UUID) e
 func (s *ServerService) ValidateAPIKey(ctx context.Context, apiKey string) (*models.Server, error) {
 	var server models.Server
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, organization_id, hostname, ip_address, status, last_seen, agent_version, created_at, updated_at
+		`SELECT id, organization_id, hostname, COALESCE(ip_address::text, ''), status, last_seen, agent_version, created_at, updated_at
 		 FROM servers WHERE api_key = $1`, apiKey).Scan(
 		&server.ID, &server.OrganizationID, &server.Hostname, &server.IPAddress,
 		&server.Status, &server.LastSeen, &server.AgentVersion, &server.CreatedAt, &server.UpdatedAt)

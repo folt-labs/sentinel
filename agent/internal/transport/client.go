@@ -38,9 +38,16 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	}, nil
 }
 
+// eventBatch wraps events for the API
+type eventBatch struct {
+	Events interface{} `json:"events"`
+}
+
 // SendEvents sends a batch of events to the API
 func (c *Client) SendEvents(events interface{}) error {
-	data, err := json.Marshal(events)
+	// Wrap events in the format expected by the API
+	batch := eventBatch{Events: events}
+	data, err := json.Marshal(batch)
 	if err != nil {
 		return fmt.Errorf("failed to marshal events: %w", err)
 	}
