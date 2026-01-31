@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux go build -o bin/serverguard-api ./cmd/serverguard-api
+RUN CGO_ENABLED=0 go build -o bin/sentinel-api ./cmd/serverguard-api
 
 # Runtime stage
 FROM alpine:3.19
@@ -25,15 +25,15 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata
 
 # Copy binary
-COPY --from=builder /app/bin/serverguard-api .
+COPY --from=builder /app/bin/sentinel-api .
 
 # Copy migrations
 COPY --from=builder /app/internal/database/migrations ./migrations
 
 # Create non-root user
-RUN adduser -D -H -s /sbin/nologin serverguard
-USER serverguard
+RUN adduser -D -H -s /sbin/nologin sentinel
+USER sentinel
 
 EXPOSE 8080
 
-CMD ["./serverguard-api"]
+CMD ["./sentinel-api"]

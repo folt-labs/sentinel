@@ -3,15 +3,16 @@ version: '3.8'
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
-    container_name: serverguard-postgres
+    container_name: sentinel-postgres
     environment:
-      POSTGRES_USER: ${DATABASE_USER:-serverguard}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-serverguard}
-      POSTGRES_DB: ${DATABASE_NAME:-serverguard}
+      POSTGRES_USER: ${DB_USER:-sentinel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-sentinel}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ../api/internal/database/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U serverguard"]
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -19,7 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: serverguard-redis
+    container_name: sentinel-redis
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -34,20 +35,22 @@ services:
     build:
       context: ../api
       dockerfile: Dockerfile
-    container_name: serverguard-api
+    container_name: sentinel-api
     environment:
+      SERVER_PORT: 8080
+      SERVER_HOST: 0.0.0.0
+      SERVER_ENVIRONMENT: production
+      SERVER_ALLOW_ORIGINS: https://${DOMAIN:?DOMAIN is required}
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
-      DATABASE_USER: ${DATABASE_USER:-serverguard}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-serverguard}
-      DATABASE_NAME: ${DATABASE_NAME:-serverguard}
+      DATABASE_USER: ${DB_USER:-sentinel}
+      DATABASE_PASSWORD: ${DB_PASSWORD}
+      DATABASE_NAME: ${DB_NAME:-sentinel}
+      DATABASE_SSL_MODE: disable
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
-      SMTP_HOST: ${SMTP_HOST:-mailhog}
-      SMTP_PORT: ${SMTP_PORT:-1025}
-    ports:
-      - "8080:8080"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRATION_HOURS: 168
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,15 +62,35 @@ services:
     build:
       context: ../dashboard
       dockerfile: Dockerfile
-    container_name: serverguard-dashboard
+      args:
+        NEXT_PUBLIC_API_URL: https://${API_DOMAIN:?API_DOMAIN is required}
+    container_name: sentinel-dashboard
     environment:
-      NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:8080}
-    ports:
-      - "3000:3000"
+      NEXT_PUBLIC_API_URL: https://${API_DOMAIN}
     depends_on:
       - api
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: sentinel-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+    depends_on:
+      - api
+      - dashboard
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
+  caddy_data:
+  caddy_config:
