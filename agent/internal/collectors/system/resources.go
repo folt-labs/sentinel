@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/folt-labs/sentinel/agent/internal/types"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -43,15 +44,15 @@ func (c *ResourcesCollector) Name() string {
 }
 
 // Collect gathers system resource metrics
-func (c *ResourcesCollector) Collect(ctx context.Context) ([]Event, error) {
-	var events []Event
+func (c *ResourcesCollector) Collect(ctx context.Context) ([]types.Event, error) {
+	var events []types.Event
 	now := time.Now()
 
 	// CPU usage
 	cpuPercent, err := cpu.Percent(time.Second, false)
 	if err == nil && len(cpuPercent) > 0 {
 		usage := cpuPercent[0]
-		event := Event{
+		event := types.Event{
 			Type:      "system_resources",
 			Severity:  "info",
 			Timestamp: now,
@@ -72,16 +73,16 @@ func (c *ResourcesCollector) Collect(ctx context.Context) ([]Event, error) {
 	// Memory usage
 	memInfo, err := mem.VirtualMemory()
 	if err == nil {
-		event := Event{
+		event := types.Event{
 			Type:      "system_resources",
 			Severity:  "info",
 			Timestamp: now,
 			Data: map[string]interface{}{
-				"metric":     "memory_percent",
-				"value":      memInfo.UsedPercent,
-				"total":      memInfo.Total,
-				"used":       memInfo.Used,
-				"available":  memInfo.Available,
+				"metric":    "memory_percent",
+				"value":     memInfo.UsedPercent,
+				"total":     memInfo.Total,
+				"used":      memInfo.Used,
+				"available": memInfo.Available,
 			},
 		}
 
@@ -102,7 +103,7 @@ func (c *ResourcesCollector) Collect(ctx context.Context) ([]Event, error) {
 				continue
 			}
 
-			event := Event{
+			event := types.Event{
 				Type:      "system_resources",
 				Severity:  "info",
 				Timestamp: now,

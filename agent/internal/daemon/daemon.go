@@ -11,20 +11,13 @@ import (
 	"github.com/folt-labs/sentinel/agent/internal/collectors/system"
 	"github.com/folt-labs/sentinel/agent/internal/config"
 	"github.com/folt-labs/sentinel/agent/internal/transport"
+	"github.com/folt-labs/sentinel/agent/internal/types"
 )
 
 // Collector interface for all data collectors
 type Collector interface {
 	Name() string
-	Collect(ctx context.Context) ([]Event, error)
-}
-
-// Event represents a security event to be sent to the API
-type Event struct {
-	Type      string                 `json:"type"`
-	Severity  string                 `json:"severity"`
-	Timestamp time.Time              `json:"timestamp"`
-	Data      map[string]interface{} `json:"data"`
+	Collect(ctx context.Context) ([]types.Event, error)
 }
 
 // Daemon manages the agent lifecycle
@@ -32,7 +25,7 @@ type Daemon struct {
 	cfg        *config.Config
 	collectors []Collector
 	client     *transport.Client
-	events     chan Event
+	events     chan types.Event
 	wg         sync.WaitGroup
 }
 
@@ -46,7 +39,7 @@ func New(cfg *config.Config) (*Daemon, error) {
 	d := &Daemon{
 		cfg:    cfg,
 		client: client,
-		events: make(chan Event, 1000),
+		events: make(chan types.Event, 1000),
 	}
 
 	// Initialize collectors based on config
@@ -132,7 +125,7 @@ func (d *Daemon) eventSender(ctx context.Context) {
 	ticker := time.NewTicker(d.cfg.Agent.SendEvery)
 	defer ticker.Stop()
 
-	var batch []Event
+	var batch []types.Event
 
 	for {
 		select {
@@ -158,7 +151,7 @@ func (d *Daemon) eventSender(ctx context.Context) {
 	}
 }
 
-func (d *Daemon) sendBatch(events []Event) {
+func (d *Daemon) sendBatch(events []types.Event) {
 	if err := d.client.SendEvents(events); err != nil {
 		log.Printf("Failed to send %d events: %v", len(events), err)
 		// Events will be queued for retry by transport layer

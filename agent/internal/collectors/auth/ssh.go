@@ -8,15 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-// Event represents a security event
-type Event struct {
-	Type      string                 `json:"type"`
-	Severity  string                 `json:"severity"`
-	Timestamp time.Time              `json:"timestamp"`
-	Data      map[string]interface{} `json:"data"`
-}
+	"github.com/folt-labs/sentinel/agent/internal/types"
+)
 
 // SSHCollector monitors SSH authentication events
 type SSHCollector struct {
@@ -46,11 +40,11 @@ func (c *SSHCollector) Name() string {
 }
 
 // Collect gathers SSH authentication events
-func (c *SSHCollector) Collect(ctx context.Context) ([]Event, error) {
+func (c *SSHCollector) Collect(ctx context.Context) ([]types.Event, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var events []Event
+	var events []types.Event
 
 	for _, logFile := range c.logFiles {
 		fileEvents, err := c.processLogFile(logFile)
@@ -64,7 +58,7 @@ func (c *SSHCollector) Collect(ctx context.Context) ([]Event, error) {
 	return events, nil
 }
 
-func (c *SSHCollector) processLogFile(path string) ([]Event, error) {
+func (c *SSHCollector) processLogFile(path string) ([]types.Event, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -85,7 +79,7 @@ func (c *SSHCollector) processLogFile(path string) ([]Event, error) {
 		file.Seek(lastPos, 0)
 	}
 
-	var events []Event
+	var events []types.Event
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
@@ -103,12 +97,12 @@ func (c *SSHCollector) processLogFile(path string) ([]Event, error) {
 	return events, scanner.Err()
 }
 
-func (c *SSHCollector) parseLine(line string) *Event {
+func (c *SSHCollector) parseLine(line string) *types.Event {
 	now := time.Now()
 
 	// Check for accepted authentication
 	if matches := sshAcceptedPattern.FindStringSubmatch(line); matches != nil {
-		return &Event{
+		return &types.Event{
 			Type:      "ssh_login_success",
 			Severity:  "info",
 			Timestamp: now,
@@ -129,7 +123,7 @@ func (c *SSHCollector) parseLine(line string) *Event {
 		if matches[2] == "root" {
 			severity = "high"
 		}
-		return &Event{
+		return &types.Event{
 			Type:      "ssh_login_failed",
 			Severity:  severity,
 			Timestamp: now,
@@ -145,7 +139,7 @@ func (c *SSHCollector) parseLine(line string) *Event {
 
 	// Check for invalid user attempts
 	if matches := sshInvalidUser.FindStringSubmatch(line); matches != nil {
-		return &Event{
+		return &types.Event{
 			Type:      "ssh_invalid_user",
 			Severity:  "warning",
 			Timestamp: now,
@@ -165,11 +159,11 @@ func (c *SSHCollector) parseLine(line string) *Event {
 	return nil
 }
 
-func (c *SSHCollector) parseSudoLine(line string) *Event {
+func (c *SSHCollector) parseSudoLine(line string) *types.Event {
 	now := time.Now()
 
 	if strings.Contains(line, "authentication failure") {
-		return &Event{
+		return &types.Event{
 			Type:      "sudo_auth_failed",
 			Severity:  "warning",
 			Timestamp: now,
@@ -180,7 +174,7 @@ func (c *SSHCollector) parseSudoLine(line string) *Event {
 	}
 
 	if strings.Contains(line, "COMMAND=") {
-		return &Event{
+		return &types.Event{
 			Type:      "sudo_command",
 			Severity:  "info",
 			Timestamp: now,

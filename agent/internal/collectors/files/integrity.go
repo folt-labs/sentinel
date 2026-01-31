@@ -8,15 +8,9 @@ import (
 	"os"
 	"sync"
 	"time"
-)
 
-// Event represents a security event
-type Event struct {
-	Type      string                 `json:"type"`
-	Severity  string                 `json:"severity"`
-	Timestamp time.Time              `json:"timestamp"`
-	Data      map[string]interface{} `json:"data"`
-}
+	"github.com/folt-labs/sentinel/agent/internal/types"
+)
 
 // FileInfo stores file metadata for comparison
 type FileInfo struct {
@@ -30,9 +24,9 @@ type FileInfo struct {
 
 // IntegrityCollector monitors file changes
 type IntegrityCollector struct {
-	paths      []string
-	baseline   map[string]FileInfo
-	mu         sync.Mutex
+	paths       []string
+	baseline    map[string]FileInfo
+	mu          sync.Mutex
 	initialized bool
 }
 
@@ -50,11 +44,11 @@ func (c *IntegrityCollector) Name() string {
 }
 
 // Collect checks for file changes
-func (c *IntegrityCollector) Collect(ctx context.Context) ([]Event, error) {
+func (c *IntegrityCollector) Collect(ctx context.Context) ([]types.Event, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var events []Event
+	var events []types.Event
 	currentState := make(map[string]FileInfo)
 
 	for _, path := range c.paths {
@@ -63,7 +57,7 @@ func (c *IntegrityCollector) Collect(ctx context.Context) ([]Event, error) {
 			if os.IsNotExist(err) {
 				// Check if file was deleted
 				if _, existed := c.baseline[path]; existed {
-					events = append(events, Event{
+					events = append(events, types.Event{
 						Type:      "file_deleted",
 						Severity:  "critical",
 						Timestamp: time.Now(),
@@ -90,7 +84,7 @@ func (c *IntegrityCollector) Collect(ctx context.Context) ([]Event, error) {
 			events = append(events, changeEvents...)
 		} else {
 			// New file detected
-			events = append(events, Event{
+			events = append(events, types.Event{
 				Type:      "file_created",
 				Severity:  "high",
 				Timestamp: time.Now(),
@@ -145,13 +139,13 @@ func (c *IntegrityCollector) calculateChecksum(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func (c *IntegrityCollector) detectChanges(old, new FileInfo) []Event {
-	var events []Event
+func (c *IntegrityCollector) detectChanges(old, new FileInfo) []types.Event {
+	var events []types.Event
 	now := time.Now()
 
 	// Check content change
 	if old.Checksum != new.Checksum {
-		events = append(events, Event{
+		events = append(events, types.Event{
 			Type:      "file_modified",
 			Severity:  "high",
 			Timestamp: now,
@@ -167,7 +161,7 @@ func (c *IntegrityCollector) detectChanges(old, new FileInfo) []Event {
 
 	// Check permission change
 	if old.Mode != new.Mode {
-		events = append(events, Event{
+		events = append(events, types.Event{
 			Type:      "file_permissions_changed",
 			Severity:  "high",
 			Timestamp: now,

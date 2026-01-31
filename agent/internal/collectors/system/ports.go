@@ -5,16 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/folt-labs/sentinel/agent/internal/types"
 	"github.com/shirou/gopsutil/v4/net"
 )
-
-// Event represents a security event
-type Event struct {
-	Type      string                 `json:"type"`
-	Severity  string                 `json:"severity"`
-	Timestamp time.Time              `json:"timestamp"`
-	Data      map[string]interface{} `json:"data"`
-}
 
 // PortInfo represents an open port
 type PortInfo struct {
@@ -46,7 +39,7 @@ func (c *PortsCollector) Name() string {
 }
 
 // Collect gathers open port information
-func (c *PortsCollector) Collect(ctx context.Context) ([]Event, error) {
+func (c *PortsCollector) Collect(ctx context.Context) ([]types.Event, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -55,7 +48,7 @@ func (c *PortsCollector) Collect(ctx context.Context) ([]Event, error) {
 		return nil, err
 	}
 
-	var events []Event
+	var events []types.Event
 	currentPorts := make(map[string]PortInfo)
 
 	for _, conn := range connections {
@@ -88,7 +81,7 @@ func (c *PortsCollector) Collect(ctx context.Context) ([]Event, error) {
 				severity = "high"
 			}
 
-			events = append(events, Event{
+			events = append(events, types.Event{
 				Type:      "port_opened",
 				Severity:  severity,
 				Timestamp: time.Now(),
@@ -106,7 +99,7 @@ func (c *PortsCollector) Collect(ctx context.Context) ([]Event, error) {
 	if c.initialized {
 		for key, port := range c.baseline {
 			if _, exists := currentPorts[key]; !exists {
-				events = append(events, Event{
+				events = append(events, types.Event{
 					Type:      "port_closed",
 					Severity:  "info",
 					Timestamp: time.Now(),
