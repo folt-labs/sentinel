@@ -1,0 +1,28 @@
+server:
+  port: 8080
+  host: "0.0.0.0"
+  environment: "development"
+  allow_origins: "*"
+
+database:
+  host: "localhost"
+  port: 5432
+  user: "sentinel"
+  password: "sentinel"
+  name: "sentinel"
+  ssl_mode: "disable"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+
+jwt:
+  secret: "dev-secret-change-in-production"
+  expiration_hours: 24
+
+smtp:
+  host: "localhost"
+  port: 1025
+  from: "noreply@sentinel.local"

@@ -1,0 +1,20 @@
+FROM golang:1.22-alpine
+
+WORKDIR /app
+
+# Install air for hot reload (optional) and basic tools
+RUN apk add --no-cache git
+
+# Copy go mod files first for caching
+COPY go.mod go.sum* ./
+RUN go mod download || true
+
+# Copy source
+COPY . .
+
+# Download dependencies
+RUN go mod tidy
+
+EXPOSE 8080
+
+CMD ["go", "run", "cmd/serverguard-api/main.go"]

@@ -1,0 +1,40 @@
+# Binaries
+agent/bin/
+api/bin/
+scanner/bin/
+
+# Dependencies
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test coverage
+coverage/
+*.out
+
+# Build artifacts
+dist/
+build/
+
+# Local development
+*.local
+
+.claude/

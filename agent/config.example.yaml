@@ -1,0 +1,52 @@
+# ServerGuard Agent Configuration
+
+server:
+  # URL of the ServerGuard API
+  url: "http://localhost:8080"
+  # API key (from dashboard when adding server)
+  api_key: "sg_your_api_key_here"
+
+agent:
+  # Override hostname (default: system hostname)
+  # hostname: "my-server"
+
+  # How often to collect data from collectors
+  collect_every: 30s
+
+  # How often to send batched events to API
+  send_every: 60s
+
+  # Directory for offline event queue
+  queue_dir: /var/lib/serverguard/queue
+
+collectors:
+  ssh:
+    enabled: true
+    log_files:
+      - /var/log/auth.log    # Debian/Ubuntu
+      - /var/log/secure      # RHEL/CentOS
+
+  file_integrity:
+    enabled: true
+    paths:
+      - /etc/passwd
+      - /etc/shadow
+      - /etc/sudoers
+      - /etc/ssh/sshd_config
+      - /etc/crontab
+
+  ports:
+    enabled: true
+
+  resources:
+    enabled: true
+
+transport:
+  # Request timeout
+  timeout: 30s
+
+  # Number of retry attempts for failed requests
+  retry_attempts: 3
+
+  # Delay between retries
+  retry_delay: 5s
