@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { useEffect, useState } from "react";
 import type { User, Organization } from "./api";
 
 interface AuthState {
@@ -25,3 +26,25 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+// Hook to handle hydration - returns true once client-side state is ready
+export const useHydration = () => {
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = useAuthStore.persist.onFinishHydration(() => {
+      setHydrated(true);
+    });
+
+    // Check if already hydrated
+    if (useAuthStore.persist.hasHydrated()) {
+      setHydrated(true);
+    }
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  return hydrated;
+};

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { useAuthStore } from "@/lib/store";
+import { useAuthStore, useHydration } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 const navigation = [
@@ -21,12 +21,22 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const { token, user, organization, clearAuth } = useAuthStore();
+  const hydrated = useHydration();
 
   useEffect(() => {
-    if (!token) {
+    if (hydrated && !token) {
       router.push("/login");
     }
-  }, [token, router]);
+  }, [token, router, hydrated]);
+
+  // Wait for hydration before rendering
+  if (!hydrated) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
+      </div>
+    );
+  }
 
   if (!token) {
     return null;
