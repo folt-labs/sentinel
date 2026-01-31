@@ -5,6 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/folt-labs/sentinel/api/internal/websocket"
 )
 
 // ListAlerts returns all alerts for the organization
@@ -65,6 +66,18 @@ func (h *Handler) AcknowledgeAlert(c fiber.Ctx) error {
 		})
 	}
 
+	// Broadcast alert status change via WebSocket
+	if h.wsHub != nil {
+		h.wsHub.Broadcast(orgID, websocket.MessageTypeAlert, map[string]interface{}{
+			"id":     alertID.String(),
+			"status": "acknowledged",
+		})
+		// Also broadcast dashboard update
+		h.wsHub.Broadcast(orgID, websocket.MessageTypeDashboard, map[string]interface{}{
+			"refresh": true,
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"status": "acknowledged",
 	})
@@ -84,6 +97,18 @@ func (h *Handler) ResolveAlert(c fiber.Ctx) error {
 	if err := h.alerts.Resolve(c.Context(), orgID, alertID, userID); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to resolve alert",
+		})
+	}
+
+	// Broadcast alert status change via WebSocket
+	if h.wsHub != nil {
+		h.wsHub.Broadcast(orgID, websocket.MessageTypeAlert, map[string]interface{}{
+			"id":     alertID.String(),
+			"status": "resolved",
+		})
+		// Also broadcast dashboard update
+		h.wsHub.Broadcast(orgID, websocket.MessageTypeDashboard, map[string]interface{}{
+			"refresh": true,
 		})
 	}
 
@@ -153,6 +178,79 @@ func (h *Handler) CreateNotificationChannel(c fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(channel)
 }
 
+// GetNotificationChannel returns a specific notification channel
+func (h *Handler) GetNotificationChannel(c fiber.Ctx) error {
+	orgID := c.Locals("organization_id").(uuid.UUID)
+	channelID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid channel ID",
+		})
+	}
+
+	channel, err := h.alerts.GetNotificationChannel(c.Context(), orgID, channelID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Notification channel not found",
+		})
+	}
+
+	return c.JSON(channel)
+}
+
+// UpdateNotificationChannel updates a notification channel
+func (h *Handler) UpdateNotificationChannel(c fiber.Ctx) error {
+	orgID := c.Locals("organization_id").(uuid.UUID)
+	channelID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid channel ID",
+		})
+	}
+
+	var req struct {
+		Name    string                 `json:"name"`
+		Config  map[string]interface{} `json:"config"`
+		Enabled *bool                  `json:"enabled"`
+	}
+	if err := c.Bind().JSON(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// Get existing channel to use current values for unset fields
+	existing, err := h.alerts.GetNotificationChannel(c.Context(), orgID, channelID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Notification channel not found",
+		})
+	}
+
+	name := existing.Name
+	if req.Name != "" {
+		name = req.Name
+	}
+	config := existing.Config
+	if req.Config != nil {
+		config = req.Config
+	}
+	enabled := existing.Enabled
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	if err := h.alerts.UpdateNotificationChannel(c.Context(), orgID, channelID, name, config, enabled); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to update notification channel",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"status": "updated",
+	})
+}
+
 // DeleteNotificationChannel deletes a notification channel
 func (h *Handler) DeleteNotificationChannel(c fiber.Ctx) error {
 	orgID := c.Locals("organization_id").(uuid.UUID)
@@ -170,6 +268,36 @@ func (h *Handler) DeleteNotificationChannel(c fiber.Ctx) error {
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// TestNotificationChannel sends a test notification
+func (h *Handler) TestNotificationChannel(c fiber.Ctx) error {
+	orgID := c.Locals("organization_id").(uuid.UUID)
+	channelID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid channel ID",
+		})
+	}
+
+	channel, err := h.alerts.GetNotificationChannel(c.Context(), orgID, channelID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Notification channel not found",
+		})
+	}
+
+	if err := h.notifications.TestChannel(c.Context(), *channel); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "Failed to send test notification",
+			"details": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"status":  "ok",
+		"message": "Test notification sent successfully",
+	})
 }
 
 // queryInt helper to parse int query params

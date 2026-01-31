@@ -78,18 +78,20 @@ const (
 
 // Alert represents a triggered alert
 type Alert struct {
-	ID             uuid.UUID  `json:"id" db:"id"`
-	OrganizationID uuid.UUID  `json:"organization_id" db:"organization_id"`
-	ServerID       uuid.UUID  `json:"server_id" db:"server_id"`
-	Severity       string     `json:"severity" db:"severity"`
-	Status         string     `json:"status" db:"status"` // open, acknowledged, resolved
-	Title          string     `json:"title" db:"title"`
-	Description    string     `json:"description" db:"description"`
-	TriggeredAt    time.Time  `json:"triggered_at" db:"triggered_at"`
-	AcknowledgedAt *time.Time `json:"acknowledged_at" db:"acknowledged_at"`
-	ResolvedAt     *time.Time `json:"resolved_at" db:"resolved_at"`
-	AcknowledgedBy *uuid.UUID `json:"acknowledged_by" db:"acknowledged_by"`
-	ResolvedBy     *uuid.UUID `json:"resolved_by" db:"resolved_by"`
+	ID              uuid.UUID  `json:"id" db:"id"`
+	OrganizationID  uuid.UUID  `json:"organization_id" db:"organization_id"`
+	ServerID        uuid.UUID  `json:"server_id" db:"server_id"`
+	Severity        string     `json:"severity" db:"severity"`
+	Status          string     `json:"status" db:"status"` // open, acknowledged, resolved
+	Title           string     `json:"title" db:"title"`
+	Description     string     `json:"description" db:"description"`
+	TriggeredAt     time.Time  `json:"triggered_at" db:"triggered_at"`
+	AcknowledgedAt  *time.Time `json:"acknowledged_at" db:"acknowledged_at"`
+	ResolvedAt      *time.Time `json:"resolved_at" db:"resolved_at"`
+	AcknowledgedBy  *uuid.UUID `json:"acknowledged_by" db:"acknowledged_by"`
+	ResolvedBy      *uuid.UUID `json:"resolved_by" db:"resolved_by"`
+	OccurrenceCount int        `json:"occurrence_count" db:"occurrence_count"`
+	LastOccurrence  *time.Time `json:"last_occurrence,omitempty" db:"last_occurrence"`
 }
 
 // AlertStatus constants

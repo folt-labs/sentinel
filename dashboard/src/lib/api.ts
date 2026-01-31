@@ -28,6 +28,11 @@ async function request<T>(
     throw new Error(error.error || `Request failed: ${response.status}`);
   }
 
+  // Handle 204 No Content (e.g., DELETE responses)
+  if (response.status === 204) {
+    return {} as T;
+  }
+
   return response.json();
 }
 
@@ -83,11 +88,38 @@ export const serversApi = {
       token,
     }),
 
-  getEvents: (token: string, id: string, limit = 100, offset = 0) =>
-    request<{ events: SecurityEvent[] }>(
-      `/api/v1/servers/${id}/events?limit=${limit}&offset=${offset}`,
+  getEvents: (
+    token: string,
+    id: string,
+    options?: { limit?: number; offset?: number; startDate?: string; endDate?: string }
+  ) => {
+    const params = new URLSearchParams();
+    params.set("limit", String(options?.limit ?? 100));
+    params.set("offset", String(options?.offset ?? 0));
+    if (options?.startDate) params.set("start_date", options.startDate);
+    if (options?.endDate) params.set("end_date", options.endDate);
+    return request<{ events: SecurityEvent[]; total: number }>(
+      `/api/v1/servers/${id}/events?${params.toString()}`,
       { token }
-    ),
+    );
+  },
+
+  getMetrics: (
+    token: string,
+    id: string,
+    options?: { metrics?: string[]; bucket?: number; startTime?: string; endTime?: string }
+  ) => {
+    const params = new URLSearchParams();
+    if (options?.metrics) params.set("metrics", options.metrics.join(","));
+    if (options?.bucket) params.set("bucket", String(options.bucket));
+    if (options?.startTime) params.set("start_time", options.startTime);
+    if (options?.endTime) params.set("end_time", options.endTime);
+    const query = params.toString();
+    return request<{ metrics: MetricSeries[] }>(
+      `/api/v1/servers/${id}/metrics${query ? `?${query}` : ""}`,
+      { token }
+    );
+  },
 };
 
 // Alerts API
@@ -123,6 +155,51 @@ export const alertsApi = {
 export const dashboardApi = {
   getSummary: (token: string) =>
     request<DashboardSummary>("/api/v1/dashboard/summary", { token }),
+};
+
+// Settings API
+export const settingsApi = {
+  listNotificationChannels: (token: string) =>
+    request<{ channels: NotificationChannel[] }>(
+      "/api/v1/settings/notification-channels",
+      { token }
+    ),
+
+  createNotificationChannel: (
+    token: string,
+    data: { name: string; type: "email" | "webhook"; config: Record<string, unknown> }
+  ) =>
+    request<NotificationChannel>("/api/v1/settings/notification-channels", {
+      method: "POST",
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  updateNotificationChannel: (
+    token: string,
+    id: string,
+    data: { name?: string; config?: Record<string, unknown>; enabled?: boolean }
+  ) =>
+    request<{ status: string }>(`/api/v1/settings/notification-channels/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  deleteNotificationChannel: (token: string, id: string) =>
+    request(`/api/v1/settings/notification-channels/${id}`, {
+      method: "DELETE",
+      token,
+    }),
+
+  testNotificationChannel: (token: string, id: string) =>
+    request<{ status: string; message: string }>(
+      `/api/v1/settings/notification-channels/${id}/test`,
+      {
+        method: "POST",
+        token,
+      }
+    ),
 };
 
 // Types
@@ -171,6 +248,8 @@ export interface Alert {
   triggered_at: string;
   acknowledged_at: string | null;
   resolved_at: string | null;
+  occurrence_count: number;
+  last_occurrence: string | null;
 }
 
 export interface DashboardSummary {
@@ -180,4 +259,25 @@ export interface DashboardSummary {
   critical_alerts: number;
   events_today: number;
   servers_by_status: Record<string, number>;
+}
+
+export interface NotificationChannel {
+  id: string;
+  organization_id: string;
+  name: string;
+  type: "email" | "webhook";
+  config: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MetricPoint {
+  timestamp: string;
+  value: number;
+}
+
+export interface MetricSeries {
+  metric: string;
+  data: MetricPoint[];
 }

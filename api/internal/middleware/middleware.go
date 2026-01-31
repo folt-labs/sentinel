@@ -3,6 +3,7 @@ package middleware
 import (
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -11,16 +12,195 @@ import (
 	"github.com/folt-labs/sentinel/api/internal/config"
 )
 
+// RateLimiter tracks request counts per IP
+type RateLimiter struct {
+	requests map[string]*requestCount
+	mu       sync.RWMutex
+	limit    int
+	window   time.Duration
+}
+
+type requestCount struct {
+	count    int
+	resetAt  time.Time
+	lockout  bool
+	lockoutUntil time.Time
+}
+
+// NewRateLimiter creates a new rate limiter
+func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
+	rl := &RateLimiter{
+		requests: make(map[string]*requestCount),
+		limit:    limit,
+		window:   window,
+	}
+	// Start cleanup goroutine
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *RateLimiter) cleanup() {
+	ticker := time.NewTicker(time.Minute)
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, rc := range rl.requests {
+			if now.After(rc.resetAt) && !rc.lockout {
+				delete(rl.requests, ip)
+			}
+			if rc.lockout && now.After(rc.lockoutUntil) {
+				delete(rl.requests, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+// Allow checks if a request is allowed
+func (rl *RateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	rc, exists := rl.requests[ip]
+
+	if !exists {
+		rl.requests[ip] = &requestCount{
+			count:   1,
+			resetAt: now.Add(rl.window),
+		}
+		return true
+	}
+
+	// Check lockout
+	if rc.lockout {
+		if now.Before(rc.lockoutUntil) {
+			return false
+		}
+		// Lockout expired, reset
+		rc.lockout = false
+		rc.count = 1
+		rc.resetAt = now.Add(rl.window)
+		return true
+	}
+
+	// Check if window expired
+	if now.After(rc.resetAt) {
+		rc.count = 1
+		rc.resetAt = now.Add(rl.window)
+		return true
+	}
+
+	rc.count++
+	if rc.count > rl.limit {
+		// Apply lockout after too many attempts
+		rc.lockout = true
+		rc.lockoutUntil = now.Add(15 * time.Minute) // 15 minute lockout
+		return false
+	}
+
+	return true
+}
+
+// GetRemainingAttempts returns remaining attempts for an IP
+func (rl *RateLimiter) GetRemainingAttempts(ip string) int {
+	rl.mu.RLock()
+	defer rl.mu.RUnlock()
+
+	rc, exists := rl.requests[ip]
+	if !exists {
+		return rl.limit
+	}
+	if rc.lockout {
+		return 0
+	}
+	remaining := rl.limit - rc.count
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+// Global rate limiters
+var (
+	authRateLimiter *RateLimiter
+	apiRateLimiter  *RateLimiter
+)
+
+func init() {
+	// 5 auth attempts per minute, lockout for 15 minutes after
+	authRateLimiter = NewRateLimiter(5, time.Minute)
+	// 100 API requests per minute
+	apiRateLimiter = NewRateLimiter(100, time.Minute)
+}
+
 // Setup configures all middleware for the Fiber app
 func Setup(app *fiber.App, cfg *config.Config) {
 	// Request logging
 	app.Use(Logger())
+
+	// Security headers
+	app.Use(SecurityHeaders())
 
 	// CORS
 	app.Use(CORS(cfg.Server.AllowOrigins))
 
 	// Recovery from panics
 	app.Use(Recovery())
+
+	// API rate limiting (applied to all routes)
+	app.Use(APIRateLimit())
+}
+
+// SecurityHeaders adds security-related HTTP headers
+func SecurityHeaders() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		// Prevent MIME type sniffing
+		c.Set("X-Content-Type-Options", "nosniff")
+		// Enable XSS protection
+		c.Set("X-XSS-Protection", "1; mode=block")
+		// Prevent clickjacking
+		c.Set("X-Frame-Options", "DENY")
+		// Referrer policy
+		c.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// Content Security Policy for API
+		c.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		// Strict Transport Security (only in production)
+		c.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+		return c.Next()
+	}
+}
+
+// AuthRateLimit rate limits authentication endpoints
+func AuthRateLimit() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		ip := c.IP()
+		if !authRateLimiter.Allow(ip) {
+			remaining := authRateLimiter.GetRemainingAttempts(ip)
+			c.Set("X-RateLimit-Remaining", "0")
+			c.Set("Retry-After", "900") // 15 minutes
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error":     "Too many authentication attempts. Please try again later.",
+				"remaining": remaining,
+			})
+		}
+		c.Set("X-RateLimit-Remaining", string(rune('0'+authRateLimiter.GetRemainingAttempts(ip))))
+		return c.Next()
+	}
+}
+
+// APIRateLimit rate limits general API access
+func APIRateLimit() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		ip := c.IP()
+		if !apiRateLimiter.Allow(ip) {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "Too many requests. Please slow down.",
+			})
+		}
+		return c.Next()
+	}
 }
 
 // Logger logs all requests

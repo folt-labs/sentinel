@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"log"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 	"github.com/folt-labs/sentinel/api/internal/services"
+	"github.com/folt-labs/sentinel/api/internal/websocket"
 )
 
 // AgentRegisterRequest represents an agent registration request
@@ -81,13 +85,57 @@ func (h *Handler) IngestEvents(c fiber.Ctx) error {
 	// Update server last seen
 	h.servers.UpdateLastSeen(c.Context(), server.ID)
 
-	// Process alerts for high-severity events
-	go h.alerts.ProcessEvents(c.Context(), server.OrganizationID, server.ID, batch.Events)
+	// Process alerts for high-severity events and send notifications
+	go h.processEventsWithNotifications(server.OrganizationID, server.ID, server.Hostname, batch.Events)
 
 	return c.JSON(fiber.Map{
 		"status":   "ok",
 		"received": count,
 	})
+}
+
+// processEventsWithNotifications creates alerts and sends notifications
+func (h *Handler) processEventsWithNotifications(orgID, serverID uuid.UUID, hostname string, events []services.AgentEvent) {
+	ctx := context.Background()
+
+	// Broadcast new events via WebSocket
+	if h.wsHub != nil && len(events) > 0 {
+		h.wsHub.Broadcast(orgID, websocket.MessageTypeEvent, map[string]interface{}{
+			"server_id": serverID.String(),
+			"hostname":  hostname,
+			"count":     len(events),
+		})
+	}
+
+	for _, event := range events {
+		if event.Severity == "high" || event.Severity == "critical" {
+			alert, isNew, err := h.alerts.FindOrCreateWithNotification(ctx, orgID, serverID, event.Severity, event.Type, event.Data)
+			if err != nil {
+				log.Printf("Failed to create/update alert: %v", err)
+				continue
+			}
+
+			// Only broadcast and notify for NEW alerts (not deduplicated ones)
+			if isNew {
+				// Broadcast alert via WebSocket
+				if h.wsHub != nil {
+					h.wsHub.Broadcast(orgID, websocket.MessageTypeAlert, map[string]interface{}{
+						"id":          alert.ID.String(),
+						"server_id":   serverID.String(),
+						"hostname":    hostname,
+						"severity":    alert.Severity,
+						"title":       alert.Title,
+						"description": alert.Description,
+					})
+				}
+
+				// Send notifications (email/webhook)
+				if err := h.notifications.NotifyAlert(ctx, alert, hostname); err != nil {
+					log.Printf("Failed to send notification: %v", err)
+				}
+			}
+		}
+	}
 }
 
 // AgentHeartbeat handles agent heartbeat

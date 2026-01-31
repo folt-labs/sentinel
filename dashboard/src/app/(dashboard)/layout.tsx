@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore, useHydration } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { WebSocketProvider, useWebSocket } from "@/lib/websocket";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: "📊" },
@@ -48,15 +49,60 @@ export default function DashboardLayout({
   };
 
   return (
+    <WebSocketProvider>
+      <DashboardContent
+        pathname={pathname}
+        user={user}
+        organization={organization}
+        handleLogout={handleLogout}
+      >
+        {children}
+      </DashboardContent>
+    </WebSocketProvider>
+  );
+}
+
+function ConnectionStatus() {
+  const { isConnected } = useWebSocket();
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
+      <div
+        className={cn(
+          "w-2 h-2 rounded-full",
+          isConnected ? "bg-green-500" : "bg-gray-400"
+        )}
+      />
+      <span className="text-gray-500 dark:text-gray-400">
+        {isConnected ? "Live" : "Connecting..."}
+      </span>
+    </div>
+  );
+}
+
+function DashboardContent({
+  children,
+  pathname,
+  user,
+  organization,
+  handleLogout,
+}: {
+  children: React.ReactNode;
+  pathname: string;
+  user: { name?: string } | null;
+  organization: { name?: string } | null;
+  handleLogout: () => void;
+}) {
+  return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Sidebar */}
       <aside className="fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700">
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center h-16 px-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200 dark:border-gray-700">
             <span className="text-xl font-bold text-gray-900 dark:text-white">
               Sentinel
             </span>
+            <ConnectionStatus />
           </div>
 
           {/* Navigation */}
@@ -115,3 +161,4 @@ export default function DashboardLayout({
     </div>
   );
 }
+

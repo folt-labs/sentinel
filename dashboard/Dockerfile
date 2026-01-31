@@ -1,5 +1,5 @@
-# Build stage
-FROM node:20-alpine AS builder
+# Build stage - use amd64 for fast native build (JS is platform-independent)
+FROM --platform=linux/amd64 node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-# Runtime stage
+# Runtime stage - uses target platform (arm64)
 FROM node:20-alpine AS runner
 
 WORKDIR /app

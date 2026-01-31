@@ -1,17 +1,23 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { serversApi, type SecurityEvent } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
 import { cn, formatDate, formatRelativeTime, getSeverityColor, getStatusColor } from "@/lib/utils";
+import { MetricsChart } from "@/components/MetricsChart";
+import { DateRangePicker, type DateRange } from "@/components/DateRangePicker";
 
-function EventRow({ event }: { event: SecurityEvent }) {
+function EventRow({ event, expanded, onToggle }: { event: SecurityEvent; expanded: boolean; onToggle: () => void }) {
   return (
-    <div className="p-4 border-b border-gray-100 dark:border-gray-700 last:border-0">
+    <div
+      className="p-4 border-b border-gray-100 dark:border-gray-700 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors"
+      onClick={onToggle}
+    >
       <div className="flex items-start justify-between">
-        <div>
+        <div className="flex-1">
           <div className="flex items-center gap-2">
             <span
               className={cn(
@@ -25,16 +31,61 @@ function EventRow({ event }: { event: SecurityEvent }) {
               {event.event_type.replace(/_/g, " ")}
             </span>
           </div>
-          {typeof event.data.raw_log === 'string' && (
-            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-700 p-2 rounded">
-              {event.data.raw_log.slice(0, 200)}
-              {event.data.raw_log.length > 200 && "..."}
-            </p>
+          {expanded && (
+            <div className="mt-3 space-y-2">
+              {typeof event.data.raw_log === 'string' && (
+                <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded font-mono text-xs text-gray-600 dark:text-gray-300 overflow-x-auto">
+                  {event.data.raw_log}
+                </div>
+              )}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                {typeof event.data.username === 'string' && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">User:</span>{" "}
+                    <span className="text-gray-900 dark:text-white">{event.data.username}</span>
+                  </div>
+                )}
+                {typeof event.data.source_ip === 'string' && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">Source IP:</span>{" "}
+                    <span className="text-gray-900 dark:text-white">{event.data.source_ip}</span>
+                  </div>
+                )}
+                {typeof event.data.auth_method === 'string' && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">Auth:</span>{" "}
+                    <span className="text-gray-900 dark:text-white">{event.data.auth_method}</span>
+                  </div>
+                )}
+                {typeof event.data.file === 'string' && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400">File:</span>{" "}
+                    <span className="text-gray-900 dark:text-white font-mono">{event.data.file}</span>
+                  </div>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {formatDate(event.timestamp)}
+              </div>
+            </div>
           )}
         </div>
-        <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-          {formatRelativeTime(event.timestamp)}
-        </span>
+        <div className="flex items-center gap-2 ml-4">
+          <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+            {formatRelativeTime(event.timestamp)}
+          </span>
+          <svg
+            className={cn(
+              "w-4 h-4 text-gray-400 transition-transform",
+              expanded && "rotate-180"
+            )}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
       </div>
     </div>
   );
@@ -47,18 +98,82 @@ export default function ServerDetailPage() {
   const queryClient = useQueryClient();
   const serverId = params.id as string;
 
+  const [expandedEvent, setExpandedEvent] = useState<string | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dateRange, setDateRange] = useState<DateRange>({
+    startDate: null,
+    endDate: null,
+    label: "All time",
+  });
+
   const { data: server, isLoading: serverLoading } = useQuery({
     queryKey: ["server", serverId],
     queryFn: () => serversApi.get(token!, serverId),
     enabled: !!token && !!serverId,
+    refetchInterval: 30000,
   });
 
   const { data: eventsData, isLoading: eventsLoading } = useQuery({
-    queryKey: ["server-events", serverId],
-    queryFn: () => serversApi.getEvents(token!, serverId),
+    queryKey: ["server-events", serverId, dateRange.startDate, dateRange.endDate],
+    queryFn: () =>
+      serversApi.getEvents(token!, serverId, {
+        limit: 500,
+        startDate: dateRange.startDate || undefined,
+        endDate: dateRange.endDate || undefined,
+      }),
     enabled: !!token && !!serverId,
     refetchInterval: 30000,
   });
+
+  const { data: metricsData, isLoading: metricsLoading } = useQuery({
+    queryKey: ["server-metrics", serverId],
+    queryFn: () => serversApi.getMetrics(token!, serverId),
+    enabled: !!token && !!serverId,
+    refetchInterval: 60000,
+  });
+
+  const events = eventsData?.events || [];
+  const metrics = metricsData?.metrics || [];
+
+  // Compute stats
+  const stats = useMemo(() => {
+    const byType: Record<string, number> = {};
+    const bySeverity: Record<string, number> = {};
+
+    events.forEach(e => {
+      byType[e.event_type] = (byType[e.event_type] || 0) + 1;
+      bySeverity[e.severity] = (bySeverity[e.severity] || 0) + 1;
+    });
+
+    return { byType, bySeverity, total: events.length };
+  }, [events]);
+
+  // Get unique event types for filter
+  const eventTypes = useMemo(() => {
+    return [...new Set(events.map(e => e.event_type))].sort();
+  }, [events]);
+
+  // Filter events
+  const filteredEvents = useMemo(() => {
+    return events.filter(event => {
+      if (severityFilter !== "all" && event.severity !== severityFilter) return false;
+      if (typeFilter !== "all" && event.event_type !== typeFilter) return false;
+      if (searchQuery) {
+        const searchLower = searchQuery.toLowerCase();
+        const matchesType = event.event_type.toLowerCase().includes(searchLower);
+        const rawLog = event.data.raw_log;
+        const username = event.data.username;
+        const sourceIp = event.data.source_ip;
+        const matchesRawLog = typeof rawLog === 'string' && rawLog.toLowerCase().includes(searchLower);
+        const matchesUser = typeof username === 'string' && username.toLowerCase().includes(searchLower);
+        const matchesIP = typeof sourceIp === 'string' && sourceIp.includes(searchLower);
+        if (!matchesType && !matchesRawLog && !matchesUser && !matchesIP) return false;
+      }
+      return true;
+    });
+  }, [events, severityFilter, typeFilter, searchQuery]);
 
   const deleteMutation = useMutation({
     mutationFn: () => serversApi.delete(token!, serverId),
@@ -103,7 +218,7 @@ export default function ServerDetailPage() {
           <div className="flex items-center gap-3">
             <div
               className={cn(
-                "w-4 h-4 rounded-full",
+                "w-4 h-4 rounded-full animate-pulse",
                 server.status === "online"
                   ? "bg-green-500"
                   : server.status === "offline"
@@ -170,25 +285,100 @@ export default function ServerDetailPage() {
         </dl>
       </div>
 
-      {/* Recent events */}
+      {/* Resource Usage Chart */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Resource Usage (Last 24 Hours)
+        </h2>
+        <MetricsChart data={metrics} isLoading={metricsLoading} />
+      </div>
+
+      {/* Event Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
+          <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.total}</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Total Events</div>
+        </div>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
+          <div className="text-2xl font-bold text-red-600">{stats.bySeverity.critical || 0}</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Critical</div>
+        </div>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
+          <div className="text-2xl font-bold text-orange-600">{stats.bySeverity.high || 0}</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">High</div>
+        </div>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
+          <div className="text-2xl font-bold text-yellow-600">{stats.bySeverity.warning || 0}</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Warning</div>
+        </div>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm">
+          <div className="text-2xl font-bold text-blue-600">{stats.bySeverity.info || 0}</div>
+          <div className="text-sm text-gray-500 dark:text-gray-400">Info</div>
+        </div>
+      </div>
+
+      {/* Events */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Recent Events
-          </h2>
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Events ({filteredEvents.length}{eventsData?.total ? ` of ${eventsData.total}` : ""})
+            </h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="text"
+                placeholder="Search events..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-48"
+              />
+              <select
+                value={severityFilter}
+                onChange={(e) => setSeverityFilter(e.target.value)}
+                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
+                <option value="all">All Severities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="warning">Warning</option>
+                <option value="medium">Medium</option>
+                <option value="info">Info</option>
+              </select>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
+                <option value="all">All Types</option>
+                {eventTypes.map(type => (
+                  <option key={type} value={type}>
+                    {type.replace(/_/g, " ")}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <DateRangePicker value={dateRange} onChange={setDateRange} />
         </div>
         {eventsLoading ? (
           <div className="p-8 text-center">
             <div className="animate-pulse text-gray-500">Loading events...</div>
           </div>
-        ) : eventsData?.events?.length === 0 ? (
+        ) : filteredEvents.length === 0 ? (
           <div className="p-8 text-center">
-            <p className="text-gray-500 dark:text-gray-400">No events yet</p>
+            <p className="text-gray-500 dark:text-gray-400">
+              {events.length === 0 ? "No events yet" : "No events match your filters"}
+            </p>
           </div>
         ) : (
-          <div className="max-h-96 overflow-y-auto">
-            {eventsData?.events?.map((event) => (
-              <EventRow key={event.id} event={event} />
+          <div className="max-h-[600px] overflow-y-auto">
+            {filteredEvents.map((event) => (
+              <EventRow
+                key={event.id}
+                event={event}
+                expanded={expandedEvent === event.id}
+                onToggle={() => setExpandedEvent(expandedEvent === event.id ? null : event.id)}
+              />
             ))}
           </div>
         )}

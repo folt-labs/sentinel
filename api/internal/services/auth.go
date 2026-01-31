@@ -16,10 +16,46 @@ import (
 )
 
 var (
-	ErrEmailExists       = errors.New("email already exists")
+	ErrEmailExists        = errors.New("email already exists")
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrUserNotFound      = errors.New("user not found")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrWeakPassword       = errors.New("password must be at least 8 characters and contain uppercase, lowercase, and a number")
+	ErrInvalidEmail       = errors.New("invalid email address")
 )
+
+// ValidatePassword checks password complexity requirements
+func ValidatePassword(password string) error {
+	if len(password) < 8 {
+		return ErrWeakPassword
+	}
+
+	var hasUpper, hasLower, hasNumber bool
+	for _, c := range password {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			hasUpper = true
+		case c >= 'a' && c <= 'z':
+			hasLower = true
+		case c >= '0' && c <= '9':
+			hasNumber = true
+		}
+	}
+
+	if !hasUpper || !hasLower || !hasNumber {
+		return ErrWeakPassword
+	}
+
+	return nil
+}
+
+// ValidateEmail checks if email format is valid
+func ValidateEmail(email string) error {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	if !emailRegex.MatchString(email) {
+		return ErrInvalidEmail
+	}
+	return nil
+}
 
 // AuthService handles authentication operations
 type AuthService struct {
@@ -49,6 +85,16 @@ type AuthResult struct {
 
 // Register creates a new user and organization
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*AuthResult, error) {
+	// Validate email format
+	if err := ValidateEmail(input.Email); err != nil {
+		return nil, err
+	}
+
+	// Validate password complexity
+	if err := ValidatePassword(input.Password); err != nil {
+		return nil, err
+	}
+
 	// Check if email exists
 	var count int
 	err := s.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE email = $1", input.Email).Scan(&count)

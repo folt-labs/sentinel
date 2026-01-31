@@ -133,6 +133,17 @@ func setDefaults(v *viper.Viper) {
 }
 
 func bindEnvVars(v *viper.Viper) {
+	// Server
+	if val := os.Getenv("SERVER_PORT"); val != "" {
+		v.Set("server.port", val)
+	}
+	if val := os.Getenv("SERVER_ENVIRONMENT"); val != "" {
+		v.Set("server.environment", val)
+	}
+	if val := os.Getenv("SERVER_ALLOW_ORIGINS"); val != "" {
+		v.Set("server.allow_origins", val)
+	}
+
 	// Database
 	if val := os.Getenv("DATABASE_HOST"); val != "" {
 		v.Set("database.host", val)
@@ -149,6 +160,9 @@ func bindEnvVars(v *viper.Viper) {
 	if val := os.Getenv("DATABASE_NAME"); val != "" {
 		v.Set("database.name", val)
 	}
+	if val := os.Getenv("DATABASE_SSL_MODE"); val != "" {
+		v.Set("database.ssl_mode", val)
+	}
 
 	// Redis
 	if val := os.Getenv("REDIS_HOST"); val != "" {
@@ -161,5 +175,25 @@ func bindEnvVars(v *viper.Viper) {
 	// JWT
 	if val := os.Getenv("JWT_SECRET"); val != "" {
 		v.Set("jwt.secret", val)
+	}
+	if val := os.Getenv("JWT_EXPIRATION_HOURS"); val != "" {
+		v.Set("jwt.expiration_hours", val)
+	}
+
+	// SMTP
+	if val := os.Getenv("SMTP_HOST"); val != "" {
+		v.Set("smtp.host", val)
+	}
+	if val := os.Getenv("SMTP_PORT"); val != "" {
+		v.Set("smtp.port", val)
+	}
+	if val := os.Getenv("SMTP_USER"); val != "" {
+		v.Set("smtp.user", val)
+	}
+	if val := os.Getenv("SMTP_PASSWORD"); val != "" {
+		v.Set("smtp.password", val)
+	}
+	if val := os.Getenv("SMTP_FROM"); val != "" {
+		v.Set("smtp.from", val)
 	}
 }

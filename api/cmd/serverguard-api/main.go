@@ -15,6 +15,9 @@ import (
 	"github.com/folt-labs/sentinel/api/internal/database"
 	"github.com/folt-labs/sentinel/api/internal/handlers"
 	"github.com/folt-labs/sentinel/api/internal/middleware"
+	"github.com/folt-labs/sentinel/api/internal/services"
+	"github.com/folt-labs/sentinel/api/internal/websocket"
+	"github.com/folt-labs/sentinel/api/internal/workers"
 )
 
 var (
@@ -56,8 +59,12 @@ func main() {
 	// Setup middleware
 	middleware.Setup(app, cfg)
 
+	// Create WebSocket hub
+	wsHub := websocket.NewHub()
+	go wsHub.Run()
+
 	// Setup routes
-	handlers.Setup(app, db, cfg)
+	handlers.Setup(app, db, cfg, wsHub)
 
 	// Handle shutdown signals
 	ctx, cancel := context.WithCancel(context.Background())
@@ -65,6 +72,11 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start background workers
+	notificationService := services.NewNotificationService(db, cfg)
+	offlineDetector := workers.NewOfflineDetector(db, notificationService, wsHub)
+	go offlineDetector.Start(ctx)
 
 	// Start server in goroutine
 	go func() {

@@ -1,7 +1,7 @@
 # Sentinel Implementation Progress
 
-> Last updated: January 31, 2026
-> Status: **MVP Functional** - Core monitoring loop works end-to-end
+> Last updated: February 1, 2026
+> Status: **Production Ready (MVP+)** - Full monitoring with real-time updates, notifications and security hardening
 
 ---
 
@@ -11,10 +11,10 @@
 |-----------|--------|----------|
 | Dashboard | Running | https://sentinel.folt-labs.com |
 | API | Running | https://api.folt-labs.com |
-| Database | PostgreSQL 16 | Raspberry Pi (Docker) |
+| Database | PostgreSQL 16 | Raspberry Pi 3 (Docker) |
 | Tunnel | Cloudflare Tunnel | Active |
-| Agent | v0.1.0 Released | GitHub Releases |
-| CI/CD | GitHub Actions | Auto-builds ARM64/AMD64 images |
+| Agent | v0.1.3 Released | GitHub Releases |
+| CI/CD | GitHub Actions | Auto-builds ARM64 images |
 
 ---
 
@@ -25,18 +25,20 @@
 - [x] Docker Compose for development
 - [x] Docker Compose for production (pre-built images)
 - [x] Database migrations
-- [x] GitHub Actions for Docker image builds (ARM64 + AMD64)
-- [x] GitHub Actions for agent releases
+- [x] GitHub Actions for Docker image builds (ARM64)
+- [x] GitHub Actions for agent releases (ARM64 + AMD64)
 - [x] Cloudflare Tunnel deployment
+- [x] Fast dashboard builds (amd64 builder, arm64 runtime)
 
 ### Phase 2: Agent Core
 - [x] Go agent with daemon mode
 - [x] Configuration (YAML + environment variables)
 - [x] HTTP client with retry + offline queue
-- [x] **SSH Collector** - parses auth.log for:
+- [x] **SSH Collector** - parses auth.log OR journald for:
   - SSH login success/failure
   - Invalid user attempts
   - Sudo commands (success/failure)
+  - Works on traditional syslog AND journald systems (Raspberry Pi compatible)
 - [x] **File Integrity Collector** - monitors:
   - /etc/passwd, /etc/shadow, /etc/sudoers
   - /etc/ssh/sshd_config
@@ -50,7 +52,7 @@
   - CPU, Memory, Disk usage
   - High usage alerts (>90%)
 - [x] Install script for Linux (install.sh)
-- [x] Agent release v0.1.0 (linux-amd64, linux-arm64)
+- [x] Agent releases (linux-amd64, linux-arm64)
 
 ### Phase 3: API Core
 - [x] Fiber (Go) web framework
@@ -65,6 +67,7 @@
 - [x] Notification channels CRUD (schema + endpoints)
 - [x] CORS middleware
 - [x] Request logging
+- [x] Proper NULL handling for PostgreSQL INET/nullable columns
 
 ### Phase 4: Dashboard
 - [x] Next.js 15 + React 19
@@ -79,16 +82,95 @@
 - [x] Servers page:
   - Server list with status indicators
   - Add server modal
+  - Delete server
   - API key display on creation
   - Last seen timestamps
-- [x] Server detail page (basic)
+- [x] Server detail page with:
+  - Event statistics (total, critical, high, warning, info counts)
+  - Event filtering by severity and type
+  - Event search
+  - Expandable event details
 - [x] Alerts page:
   - Filter by status/severity
   - Acknowledge/Resolve actions
   - Auto-refresh
-- [x] Settings page (basic profile display)
+- [x] Settings page with:
+  - Profile display
+  - Organization info
+  - Notification channel management (add, test, enable/disable, delete)
+  - Agent installation guide
 - [x] Dark mode support
 - [x] Responsive design
+
+### Phase 5: Notifications & Alerts (NEW)
+- [x] **Server Offline Detection** - Background worker:
+  - Checks every 60 seconds
+  - Marks servers offline after 5 minutes without heartbeat
+  - Creates alerts for offline servers
+  - Prevents duplicate offline alerts
+- [x] **Email Notifications**:
+  - SMTP integration
+  - HTML-formatted alert emails
+  - Configurable recipients
+- [x] **Webhook Notifications**:
+  - JSON payload with alert details
+  - HMAC-SHA256 signature (optional secret)
+  - 10 second timeout
+- [x] **Notification Channel UI**:
+  - Add email/webhook channels
+  - Test notifications
+  - Enable/disable channels
+  - Delete channels
+- [x] Alert notifications on high-severity events
+
+### Phase 6: Security Hardening
+- [x] **Rate Limiting**:
+  - Auth endpoints: 5 attempts/minute, 15-minute lockout
+  - API endpoints: 100 requests/minute
+- [x] **Security Headers**:
+  - X-Content-Type-Options: nosniff
+  - X-XSS-Protection: 1; mode=block
+  - X-Frame-Options: DENY
+  - Referrer-Policy: strict-origin-when-cross-origin
+  - Content-Security-Policy
+  - Strict-Transport-Security
+- [x] **Password Validation**:
+  - Minimum 8 characters
+  - Must contain uppercase, lowercase, and number
+- [x] **Email Validation**:
+  - Proper format validation on registration
+
+### Phase 7: Real-time Updates (NEW)
+- [x] **WebSocket Server**:
+  - JWT-authenticated WebSocket connections
+  - Organization-scoped message broadcasting
+  - Automatic reconnection with exponential backoff
+  - Connection status indicator in dashboard
+- [x] **Real-time Events**:
+  - New security events broadcast instantly
+  - Alert creation/status changes broadcast
+  - Server status changes (online/offline) broadcast
+  - Server created/deleted broadcast
+- [x] **Dashboard Integration**:
+  - WebSocket context provider for React
+  - Automatic React Query cache invalidation
+  - Toast notifications for new alerts
+  - "Live" indicator in sidebar
+  - Fallback to 30s polling if WebSocket disconnects
+
+---
+
+## Bugs Fixed
+
+| Bug | Fix |
+|-----|-----|
+| Server creation fails with empty IP | Pass NULL instead of empty string for INET type |
+| Server listing returns 500 | COALESCE for nullable ip_address and agent_version |
+| Agent events not received | Fixed endpoint to /api/v1/agent/events |
+| Agent JSON format wrong | Wrapped events in {"events": [...]} |
+| Delete server shows JSON error | Handle 204 No Content response |
+| Dashboard build slow/crashes | Use amd64 for npm build, arm64 for runtime |
+| SSH collector fails on Raspberry Pi | Added journald support (no auth.log needed) |
 
 ---
 
@@ -97,58 +179,42 @@
 ### Alerting System
 - [x] Alerts created from high-severity events
 - [x] Alert state machine (open → acknowledged → resolved)
+- [x] Server offline detection with alerts
 - [ ] Custom alert rules UI
 - [ ] Alert rule evaluation engine
 - [ ] Alert deduplication/grouping
 
-### Notifications
-- [x] NotificationChannel database schema
-- [x] API endpoints for channel CRUD
-- [ ] Email sending (SMTP integration)
-- [ ] Webhook sending
-- [ ] Notification channel UI in settings
-
 ### Dashboard Features
-- [x] Basic polling refresh
-- [ ] WebSocket real-time updates
-- [ ] Event filtering/search
-- [ ] Date range picker
-- [ ] Server detail page (events timeline, metrics charts)
+- [x] Basic polling refresh (30s fallback)
+- [x] Event filtering/search
+- [x] WebSocket real-time updates
+- [ ] Date range picker for events
+- [ ] Metrics charts (CPU/Memory/Disk over time)
 
 ---
 
-## What's NOT Done (MVP Remaining)
+## What's NOT Done (Post-MVP)
 
-### Critical for Production
-- [ ] **Email notifications** - Users need to be alerted
-- [ ] **Webhook notifications** - Integration with other systems
-- [ ] **Server offline detection** - Alert when agent stops reporting
-- [ ] **Agent auto-update** - Mechanism to update deployed agents
+### Future Features
+- [ ] Agent auto-update mechanism
+- [ ] Custom alert rules builder UI
+- [ ] Alert deduplication/grouping
+- [ ] Metrics charts and graphs
+- [ ] Date range picker for events
 
-### Important UX
-- [ ] Notification channel UI in settings
-- [ ] Event search/filtering in dashboard
-- [ ] Server detail page improvements
-- [ ] Better error messages
+### Integrations
+- [ ] Slack notifications
+- [ ] Telegram notifications
+- [ ] PagerDuty integration
+- [ ] Discord webhooks
 
-### Security Hardening
-- [ ] Rate limiting on auth endpoints
-- [ ] Account lockout after failed attempts
-- [ ] Password complexity requirements
-- [ ] Security headers audit
-
----
-
-## What's Deferred (Post-MVP)
-
-- External scanners (port scanning, SSL cert checks)
-- Slack/Telegram/PagerDuty integrations
-- Team management UI (invite users, roles)
-- Multi-factor authentication
-- Audit logs
-- Custom alert rules builder UI
-- Windows/macOS agents
-- Managed cloud offering
+### Advanced Features
+- [ ] Team management UI (invite users, roles)
+- [ ] Multi-factor authentication
+- [ ] Audit logs
+- [ ] External scanners (port scanning, SSL cert checks)
+- [ ] Windows/macOS agents
+- [ ] Managed cloud offering
 
 ---
 
@@ -157,6 +223,14 @@
 ### Install Agent on a Server
 ```bash
 curl -sSL https://raw.githubusercontent.com/folt-labs/sentinel/main/install.sh | sudo bash -s -- YOUR_API_KEY https://api.folt-labs.com
+```
+
+### Update Agent to Latest Version
+```bash
+sudo systemctl stop sentinel-agent
+sudo curl -fsSL "https://github.com/folt-labs/sentinel/releases/download/v0.1.3/sentinel-agent-linux-arm64" -o /opt/sentinel/bin/sentinel-agent
+sudo chmod +x /opt/sentinel/bin/sentinel-agent
+sudo systemctl start sentinel-agent
 ```
 
 ### Development (Local)
@@ -188,27 +262,69 @@ docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
+### Release New Agent Version
+```bash
+git tag v0.1.X
+git push origin v0.1.X
+# Wait for GitHub Actions to build
+```
+
+---
+
+## Environment Variables
+
+### API Configuration
+```bash
+# Server
+SERVER_PORT=8080
+SERVER_ENVIRONMENT=production
+SERVER_ALLOW_ORIGINS=https://sentinel.folt-labs.com
+
+# Database
+DATABASE_HOST=postgres
+DATABASE_PORT=5432
+DATABASE_USER=sentinel
+DATABASE_PASSWORD=<secure>
+DATABASE_NAME=sentinel
+DATABASE_SSL_MODE=disable
+
+# Redis
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# JWT
+JWT_SECRET=<random-hex>
+JWT_EXPIRATION_HOURS=168
+
+# SMTP (for email notifications)
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=alerts@example.com
+SMTP_PASSWORD=<password>
+SMTP_FROM=Sentinel <alerts@example.com>
+```
+
 ---
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      RASPBERRY PI                            │
-│                                                              │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
-│  │ Dashboard  │  │    API     │  │ PostgreSQL │            │
-│  │ (Next.js)  │  │   (Go)     │  │            │            │
-│  │  :3000     │  │  :8080     │  │  :5432     │            │
-│  └─────┬──────┘  └─────┬──────┘  └────────────┘            │
-│        │               │                                    │
-│        └───────┬───────┘                                    │
-│                │                                            │
-│  ┌─────────────▼─────────────┐     ┌────────────┐          │
-│  │    Cloudflare Tunnel      │     │   Redis    │          │
-│  │    (cloudflared)          │     │  :6379     │          │
-│  └─────────────┬─────────────┘     └────────────┘          │
-└────────────────┼────────────────────────────────────────────┘
+│                    RASPBERRY PI 3                           │
+│                                                             │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐           │
+│  │ Dashboard  │  │    API     │  │ PostgreSQL │           │
+│  │ (Next.js)  │  │   (Go)     │  │            │           │
+│  │  :3000     │  │  :8080     │  │  :5432     │           │
+│  └─────┬──────┘  └─────┬──────┘  └────────────┘           │
+│        │               │                                   │
+│        └───────┬───────┘                                   │
+│                │                                           │
+│  ┌─────────────▼─────────────┐                            │
+│  │    Cloudflare Tunnel      │                            │
+│  │    (cloudflared)          │                            │
+│  └─────────────┬─────────────┘                            │
+└────────────────┼───────────────────────────────────────────┘
                  │
                  ▼
         ┌────────────────┐
@@ -231,8 +347,8 @@ docker compose -f docker-compose.prod.yml up -d
 | Collector | Event Types | Severity |
 |-----------|-------------|----------|
 | SSH | `ssh_login_success` | info |
-| SSH | `ssh_login_failed` | warning |
-| SSH | `ssh_invalid_user` | high |
+| SSH | `ssh_login_failed` | warning/high |
+| SSH | `ssh_invalid_user` | warning |
 | SSH | `sudo_command` | info |
 | SSH | `sudo_auth_failed` | warning |
 | File Integrity | `file_modified` | high |
@@ -248,11 +364,31 @@ docker compose -f docker-compose.prod.yml up -d
 
 ---
 
+## New Files Added
+
+### API
+- `api/internal/workers/offline.go` - Server offline detection worker
+- `api/internal/services/notifications.go` - Email and webhook notification service
+- `api/internal/websocket/hub.go` - WebSocket connection hub and message broadcasting
+- `api/internal/websocket/handler.go` - WebSocket upgrade handler with JWT auth
+
+### Dashboard
+- `dashboard/src/lib/websocket.tsx` - WebSocket context provider and hook
+- Updated `dashboard/src/app/(dashboard)/layout.tsx` - WebSocket provider and connection status
+- Updated `dashboard/src/app/(dashboard)/settings/page.tsx` - Full notification channel management
+- Updated `dashboard/src/app/(dashboard)/servers/[id]/page.tsx` - Event filtering and stats
+- Updated `dashboard/src/lib/api.ts` - Settings API client
+
+---
+
 ## Next Steps (Priority Order)
 
-1. **Test agent installation** - Install on Pi, verify events flow
-2. **Add email notifications** - SMTP integration for alerts
-3. **Add webhook notifications** - For integrations
-4. **Server offline detection** - Background job to check last_seen
-5. **Notification channel UI** - Settings page to configure
-6. **Event search/filtering** - Dashboard improvement
+1. ~~Server offline detection~~ Done
+2. ~~Email notifications~~ Done
+3. ~~Webhook notifications~~ Done
+4. ~~Notification channel UI~~ Done
+5. ~~Event search/filtering~~ Done
+6. ~~Security hardening~~ Done
+7. ~~WebSocket updates~~ Done
+8. **Deploy and test** - Push changes and verify on production
+9. **Metrics charts** - Add CPU/Memory/Disk graphs over time

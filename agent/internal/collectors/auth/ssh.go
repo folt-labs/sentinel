@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -14,9 +15,11 @@ import (
 
 // SSHCollector monitors SSH authentication events
 type SSHCollector struct {
-	logFiles     []string
-	lastPosition map[string]int64
-	mu           sync.Mutex
+	logFiles      []string
+	lastPosition  map[string]int64
+	useJournald   bool
+	lastJournalTS time.Time
+	mu            sync.Mutex
 }
 
 // Common SSH log patterns
@@ -28,10 +31,29 @@ var (
 
 // NewSSHCollector creates a new SSH log collector
 func NewSSHCollector(logFiles []string) *SSHCollector {
-	return &SSHCollector{
-		logFiles:     logFiles,
-		lastPosition: make(map[string]int64),
+	c := &SSHCollector{
+		logFiles:      logFiles,
+		lastPosition:  make(map[string]int64),
+		lastJournalTS: time.Now(),
 	}
+
+	// Check if any log file exists, otherwise use journald
+	logFileExists := false
+	for _, f := range logFiles {
+		if _, err := os.Stat(f); err == nil {
+			logFileExists = true
+			break
+		}
+	}
+
+	if !logFileExists {
+		// Check if journalctl is available
+		if _, err := exec.LookPath("journalctl"); err == nil {
+			c.useJournald = true
+		}
+	}
+
+	return c
 }
 
 // Name returns the collector name
@@ -46,13 +68,52 @@ func (c *SSHCollector) Collect(ctx context.Context) ([]types.Event, error) {
 
 	var events []types.Event
 
-	for _, logFile := range c.logFiles {
-		fileEvents, err := c.processLogFile(logFile)
-		if err != nil {
-			// Log file might not exist on all systems
-			continue
+	if c.useJournald {
+		journalEvents, err := c.collectFromJournald()
+		if err == nil {
+			events = append(events, journalEvents...)
 		}
-		events = append(events, fileEvents...)
+	} else {
+		for _, logFile := range c.logFiles {
+			fileEvents, err := c.processLogFile(logFile)
+			if err != nil {
+				// Log file might not exist on all systems
+				continue
+			}
+			events = append(events, fileEvents...)
+		}
+	}
+
+	return events, nil
+}
+
+// collectFromJournald reads SSH events from systemd journal
+func (c *SSHCollector) collectFromJournald() ([]types.Event, error) {
+	// Get logs since last check
+	since := c.lastJournalTS.Format("2006-01-02 15:04:05")
+	c.lastJournalTS = time.Now()
+
+	// Query journald for sshd and sudo logs
+	cmd := exec.Command("journalctl", "-u", "ssh", "-u", "sshd", "-t", "sudo",
+		"--since", since, "--no-pager", "-q")
+	output, err := cmd.Output()
+	if err != nil {
+		// Try alternative: query by syslog identifier
+		cmd = exec.Command("journalctl", "-t", "sshd", "-t", "sudo",
+			"--since", since, "--no-pager", "-q")
+		output, err = cmd.Output()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var events []types.Event
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if event := c.parseLine(line); event != nil {
+			events = append(events, *event)
+		}
 	}
 
 	return events, nil
