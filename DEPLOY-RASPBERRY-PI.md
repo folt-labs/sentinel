@@ -53,11 +53,11 @@ Go to your domain registrar (Cloudflare, Namecheap, etc.) and add:
 | Type | Name | Value | TTL |
 |------|------|-------|-----|
 | A | `sentinel` | `YOUR_PUBLIC_IP` | Auto |
-| A | `api.sentinel` | `YOUR_PUBLIC_IP` | Auto |
+| A | `api` | `YOUR_PUBLIC_IP` | Auto |
 
 This creates:
 - `sentinel.folt-labs.com` → Dashboard
-- `api.sentinel.folt-labs.com` → API
+- `api.folt-labs.com` → API
 
 ### 2.2 Find Your Public IP
 
@@ -102,7 +102,7 @@ JWT_SECRET=your-jwt-secret-here
 
 # Domain
 DOMAIN=sentinel.folt-labs.com
-API_DOMAIN=api.sentinel.folt-labs.com
+API_DOMAIN=api.folt-labs.com
 EOF
 ```
 
@@ -290,7 +290,7 @@ docker compose logs dashboard
 
 ```bash
 # Test API health
-curl https://api.sentinel.folt-labs.com/health
+curl https://api.folt-labs.com/health
 
 # Open dashboard in browser
 # https://sentinel.folt-labs.com
@@ -324,12 +324,12 @@ Go to `https://sentinel.folt-labs.com` in your browser.
 ### 6.1 On any Linux server you want to monitor
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/folt-labs/sentinel/main/install.sh | sudo bash -s -- YOUR_API_KEY https://api.sentinel.folt-labs.com
+curl -sSL https://raw.githubusercontent.com/folt-labs/sentinel/main/install.sh | sudo bash -s -- YOUR_API_KEY https://api.folt-labs.com
 ```
 
 Replace:
 - `YOUR_API_KEY` with the key from Step 5.3
-- `api.sentinel.folt-labs.com` with your actual API domain
+- `api.folt-labs.com` with your actual API domain
 
 ### 6.2 Verify agent is running
 
@@ -349,7 +349,7 @@ The server should appear in your dashboard within 60 seconds.
 You can also monitor the Raspberry Pi itself:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/folt-labs/sentinel/main/install.sh | sudo bash -s -- YOUR_API_KEY https://api.sentinel.folt-labs.com
+curl -sSL https://raw.githubusercontent.com/folt-labs/sentinel/main/install.sh | sudo bash -s -- YOUR_API_KEY https://api.folt-labs.com
 ```
 
 ---
@@ -424,7 +424,7 @@ docker exec -it sentinel-postgres psql -U sentinel sentinel
 
 ### Agent not connecting
 
-1. Check API is reachable: `curl https://api.sentinel.folt-labs.com/health`
+1. Check API is reachable: `curl https://api.folt-labs.com/health`
 2. Check agent logs: `sudo journalctl -u sentinel-agent -f`
 3. Verify API key is correct
 4. Check firewall allows outbound HTTPS
@@ -492,7 +492,7 @@ top
 | Component | URL/Port |
 |-----------|----------|
 | Dashboard | https://sentinel.folt-labs.com |
-| API | https://api.sentinel.folt-labs.com |
+| API | https://api.folt-labs.com |
 | Postgres | localhost:5432 (internal) |
 | Redis | localhost:6379 (internal) |
 

@@ -1,0 +1,76 @@
+# Production docker-compose using pre-built images from GitHub Container Registry
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sentinel-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-sentinel}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-sentinel}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../api/internal/database/migrations:/docker-entrypoint-initdb.d:ro
+    command: postgres -c shared_buffers=64MB -c work_mem=4MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: sentinel-redis
+    command: redis-server --appendonly yes --maxmemory 32mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/folt-labs/sentinel-api:latest
+    container_name: sentinel-api
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_PORT: 8080
+      SERVER_HOST: 0.0.0.0
+      SERVER_ENVIRONMENT: production
+      SERVER_ALLOW_ORIGINS: https://${DOMAIN:?DOMAIN is required}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DB_USER:-sentinel}
+      DATABASE_PASSWORD: ${DB_PASSWORD}
+      DATABASE_NAME: ${DB_NAME:-sentinel}
+      DATABASE_SSL_MODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRATION_HOURS: 168
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dashboard:
+    image: ghcr.io/folt-labs/sentinel-dashboard:latest
+    container_name: sentinel-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: https://${API_DOMAIN}
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
