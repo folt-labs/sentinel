@@ -50,7 +50,8 @@ jobs:
           CGO_ENABLED: 0
         run: |
           cd agent
-          go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }}" \
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }} -X main.buildTime=${BUILD_TIME}" \
             -o ../sentinel-agent-${{ matrix.suffix }} \
             ./cmd/serverguard-agent
 

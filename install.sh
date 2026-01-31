@@ -150,7 +150,12 @@ download_binary() {
     fi
 
     chmod +x $INSTALL_DIR/bin/sentinel-agent
+
+    # Create symlink for easy CLI access
+    ln -sf $INSTALL_DIR/bin/sentinel-agent /usr/local/bin/sentinel-agent
+
     log_info "Downloaded agent to $INSTALL_DIR/bin/sentinel-agent"
+    log_info "Symlinked to /usr/local/bin/sentinel-agent"
 }
 
 # Create user
@@ -221,6 +226,11 @@ transport:
   timeout: 30s
   retry_attempts: 3
   retry_delay: 5s
+
+auto_update:
+  enabled: true
+  check_interval: 24h
+  channel: stable
 EOF
 
     chmod 600 $CONFIG_DIR/agent.yaml
@@ -305,9 +315,10 @@ show_uninstall_instructions() {
     echo "To uninstall:"
     echo "  sudo systemctl stop sentinel-agent"
     echo "  sudo systemctl disable sentinel-agent"
-    echo "  sudo rm -rf /opt/serverguard /etc/serverguard /var/lib/serverguard"
+    echo "  sudo rm -rf /opt/sentinel /etc/sentinel /var/lib/serverguard"
     echo "  sudo rm /etc/systemd/system/sentinel-agent.service"
-    echo "  sudo userdel serverguard"
+    echo "  sudo rm /usr/local/bin/sentinel-agent"
+    echo "  sudo userdel sentinel"
     echo "  sudo systemctl daemon-reload"
 }
 
@@ -343,12 +354,19 @@ main() {
     echo "   Installation Complete!"
     echo "======================================"
     echo ""
-    echo "Useful commands:"
+    echo "Service commands:"
     echo "  Status:  sudo systemctl status sentinel-agent"
     echo "  Logs:    sudo journalctl -u sentinel-agent -f"
     echo "  Restart: sudo systemctl restart sentinel-agent"
     echo "  Config:  sudo nano $CONFIG_DIR/agent.yaml"
     echo ""
+    echo "Agent CLI commands:"
+    echo "  sentinel-agent status         # Show status, version, check for updates"
+    echo "  sentinel-agent update         # Update to latest version"
+    echo "  sentinel-agent update --check # Check for updates only"
+    echo "  sentinel-agent help           # Show all commands"
+    echo ""
+    echo "Auto-updates are enabled by default (checks every 24 hours)."
     echo "Your server should appear in the dashboard within 60 seconds."
     echo ""
     show_uninstall_instructions

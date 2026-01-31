@@ -14,6 +14,14 @@ type Config struct {
 	Agent      AgentConfig      `mapstructure:"agent"`
 	Collectors CollectorConfig  `mapstructure:"collectors"`
 	Transport  TransportConfig  `mapstructure:"transport"`
+	AutoUpdate AutoUpdateConfig `mapstructure:"auto_update"`
+}
+
+// AutoUpdateConfig holds auto-update settings
+type AutoUpdateConfig struct {
+	Enabled       bool          `mapstructure:"enabled"`
+	CheckInterval time.Duration `mapstructure:"check_interval"`
+	Channel       string        `mapstructure:"channel"` // stable, beta
 }
 
 // ServerConfig holds the API server connection details
@@ -140,4 +148,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("transport.timeout", "30s")
 	v.SetDefault("transport.retry_attempts", 3)
 	v.SetDefault("transport.retry_delay", "5s")
+
+	// Auto-update defaults (enabled by default, checks every 24h)
+	v.SetDefault("auto_update.enabled", true)
+	v.SetDefault("auto_update.check_interval", "24h")
+	v.SetDefault("auto_update.channel", "stable")
 }

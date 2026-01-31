@@ -50,3 +50,14 @@ transport:
 
   # Delay between retries
   retry_delay: 5s
+
+auto_update:
+  # Enable automatic updates (default: true)
+  enabled: true
+
+  # How often to check for updates (default: 24h)
+  # First check happens 5-65 minutes after startup (with random jitter)
+  check_interval: 24h
+
+  # Update channel: "stable" or "beta" (default: stable)
+  channel: stable
