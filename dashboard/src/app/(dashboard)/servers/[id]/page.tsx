@@ -25,10 +25,10 @@ function EventRow({ event }: { event: SecurityEvent }) {
               {event.event_type.replace(/_/g, " ")}
             </span>
           </div>
-          {event.data.raw_log && (
+          {typeof event.data.raw_log === 'string' && (
             <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-700 p-2 rounded">
-              {String(event.data.raw_log).slice(0, 200)}
-              {String(event.data.raw_log).length > 200 && "..."}
+              {event.data.raw_log.slice(0, 200)}
+              {event.data.raw_log.length > 200 && "..."}
             </p>
           )}
         </div>
