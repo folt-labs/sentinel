@@ -78,10 +78,16 @@ func (s *ServerService) Create(ctx context.Context, orgID uuid.UUID, hostname, i
 	apiKey := generateAPIKey()
 	now := time.Now()
 
+	// Convert empty IP to nil for PostgreSQL INET type
+	var ipParam interface{}
+	if ipAddress != "" {
+		ipParam = ipAddress
+	}
+
 	_, err := s.db.Pool.Exec(ctx,
 		`INSERT INTO servers (id, organization_id, hostname, ip_address, status, api_key, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-		serverID, orgID, hostname, ipAddress, models.StatusOffline, apiKey, now)
+		serverID, orgID, hostname, ipParam, models.StatusOffline, apiKey, now)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +140,17 @@ func (s *ServerService) ValidateAPIKey(ctx context.Context, apiKey string) (*mod
 // UpdateAgentInfo updates server info from agent registration
 func (s *ServerService) UpdateAgentInfo(ctx context.Context, serverID uuid.UUID, hostname, ipAddress, version string) error {
 	now := time.Now()
+
+	// Convert empty IP to nil for PostgreSQL INET type
+	var ipParam interface{}
+	if ipAddress != "" {
+		ipParam = ipAddress
+	}
+
 	_, err := s.db.Pool.Exec(ctx,
 		`UPDATE servers SET hostname = $1, ip_address = $2, agent_version = $3, status = $4, last_seen = $5, updated_at = $5
 		 WHERE id = $6`,
-		hostname, ipAddress, version, models.StatusOnline, now, serverID)
+		hostname, ipParam, version, models.StatusOnline, now, serverID)
 	return err
 }
 

@@ -45,7 +45,7 @@ func (c *Client) SendEvents(events interface{}) error {
 		return fmt.Errorf("failed to marshal events: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/events", c.cfg.Server.URL)
+	url := fmt.Sprintf("%s/api/v1/agent/events", c.cfg.Server.URL)
 
 	var lastErr error
 	for attempt := 0; attempt < c.cfg.Transport.RetryAttempts; attempt++ {
@@ -112,7 +112,7 @@ func (c *Client) ProcessQueue() error {
 			continue
 		}
 
-		url := fmt.Sprintf("%s/api/v1/events", c.cfg.Server.URL)
+		url := fmt.Sprintf("%s/api/v1/agent/events", c.cfg.Server.URL)
 		req, err := http.NewRequest("POST", url, bytes.NewReader(data))
 		if err != nil {
 			continue
