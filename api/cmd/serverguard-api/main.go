@@ -23,7 +23,7 @@ var (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "Path to configuration file")
+	configPath := flag.String("config", "", "Path to configuration file")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
