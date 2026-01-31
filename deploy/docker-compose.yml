@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -75,27 +73,6 @@ services:
       - api
     restart: unless-stopped
 
-  caddy:
-    image: caddy:2-alpine
-    container_name: sentinel-caddy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-      - /etc/ssl/cloudflare:/etc/ssl/cloudflare:ro
-    environment:
-      DOMAIN: ${DOMAIN}
-      API_DOMAIN: ${API_DOMAIN}
-    depends_on:
-      - api
-      - dashboard
-    restart: unless-stopped
-
 volumes:
   postgres_data:
   redis_data:
-  caddy_data:
-  caddy_config:
