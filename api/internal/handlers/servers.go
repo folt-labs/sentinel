@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"log"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 )
@@ -17,6 +19,7 @@ func (h *Handler) ListServers(c fiber.Ctx) error {
 
 	servers, err := h.servers.List(c.Context(), orgID)
 	if err != nil {
+		log.Printf("ListServers error: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch servers",
 		})
@@ -66,6 +69,7 @@ func (h *Handler) CreateServer(c fiber.Ctx) error {
 
 	result, err := h.servers.Create(c.Context(), orgID, req.Hostname, req.IPAddress)
 	if err != nil {
+		log.Printf("CreateServer error: %v", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to create server",
 		})
