@@ -1,9 +1,10 @@
 {
-    # Disable automatic HTTPS - Cloudflare handles SSL
     auto_https off
 }
 
-:80 {
+:443 {
+    tls /etc/ssl/cloudflare/cert.pem /etc/ssl/cloudflare/key.pem
+
     @dashboard host {$DOMAIN}
     handle @dashboard {
         reverse_proxy dashboard:3000
@@ -13,4 +14,8 @@
     handle @api {
         reverse_proxy api:8080
     }
+}
+
+:80 {
+    redir https://{host}{uri} permanent
 }
