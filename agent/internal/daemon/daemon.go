@@ -20,13 +20,21 @@ type Collector interface {
 	Collect(ctx context.Context) ([]types.Event, error)
 }
 
+// StreamingCollector interface for real-time collectors
+type StreamingCollector interface {
+	Collector
+	StartStreaming(ctx context.Context) error
+	Stop()
+}
+
 // Daemon manages the agent lifecycle
 type Daemon struct {
-	cfg        *config.Config
-	collectors []Collector
-	client     *transport.Client
-	events     chan types.Event
-	wg         sync.WaitGroup
+	cfg                 *config.Config
+	collectors          []Collector
+	streamingCollectors []StreamingCollector
+	client              *transport.Client
+	events              chan types.Event
+	wg                  sync.WaitGroup
 }
 
 // New creates a new daemon instance
@@ -39,7 +47,7 @@ func New(cfg *config.Config) (*Daemon, error) {
 	d := &Daemon{
 		cfg:    cfg,
 		client: client,
-		events: make(chan types.Event, 1000),
+		events: make(chan types.Event, 10000), // Larger buffer for high volume
 	}
 
 	// Initialize collectors based on config
@@ -50,7 +58,9 @@ func New(cfg *config.Config) (*Daemon, error) {
 
 func (d *Daemon) initCollectors() {
 	if d.cfg.Collectors.SSH.Enabled {
-		d.collectors = append(d.collectors, auth.NewSSHCollector(d.cfg.Collectors.SSH.LogFiles))
+		sshCollector := auth.NewSSHCollector(d.cfg.Collectors.SSH.LogFiles)
+		d.collectors = append(d.collectors, sshCollector)
+		d.streamingCollectors = append(d.streamingCollectors, sshCollector)
 	}
 
 	if d.cfg.Collectors.FileIntegrity.Enabled {
@@ -65,24 +75,34 @@ func (d *Daemon) initCollectors() {
 		d.collectors = append(d.collectors, system.NewResourcesCollector())
 	}
 
-	log.Printf("Initialized %d collectors", len(d.collectors))
+	log.Printf("Initialized %d collectors (%d streaming)", len(d.collectors), len(d.streamingCollectors))
 }
 
 // Run starts the daemon
 func (d *Daemon) Run(ctx context.Context) error {
-	// Start event sender
-	d.wg.Add(1)
-	go d.eventSender(ctx)
+	// Start streaming collectors for real-time events
+	for _, sc := range d.streamingCollectors {
+		if err := sc.StartStreaming(ctx); err != nil {
+			log.Printf("Failed to start streaming for %s: %v", sc.Name(), err)
+		} else {
+			log.Printf("Started real-time streaming for %s", sc.Name())
+		}
+	}
 
-	// Start collection scheduler
+	// Start real-time event sender (sends immediately, no batching delay)
 	d.wg.Add(1)
-	go d.collectionLoop(ctx)
+	go d.realtimeEventSender(ctx)
+
+	// Start periodic collection for non-streaming collectors
+	d.wg.Add(1)
+	go d.periodicCollectionLoop(ctx)
 
 	<-ctx.Done()
 	return nil
 }
 
-func (d *Daemon) collectionLoop(ctx context.Context) {
+// periodicCollectionLoop handles periodic collectors (file integrity, ports, resources)
+func (d *Daemon) periodicCollectionLoop(ctx context.Context) {
 	defer d.wg.Done()
 
 	ticker := time.NewTicker(d.cfg.Agent.CollectEvery)
@@ -119,13 +139,14 @@ func (d *Daemon) runCollection(ctx context.Context) {
 	}
 }
 
-func (d *Daemon) eventSender(ctx context.Context) {
+// realtimeEventSender sends events immediately as they arrive
+// Uses micro-batching: waits up to 100ms to collect a small batch, then sends
+func (d *Daemon) realtimeEventSender(ctx context.Context) {
 	defer d.wg.Done()
 
-	ticker := time.NewTicker(d.cfg.Agent.SendEvery)
-	defer ticker.Stop()
-
 	var batch []types.Event
+	flushTimer := time.NewTimer(100 * time.Millisecond)
+	flushTimer.Stop()
 
 	for {
 		select {
@@ -135,14 +156,24 @@ func (d *Daemon) eventSender(ctx context.Context) {
 				d.sendBatch(batch)
 			}
 			return
+
 		case event := <-d.events:
 			batch = append(batch, event)
-			// Send if batch is large enough
-			if len(batch) >= 100 {
+
+			// Start flush timer if this is the first event in batch
+			if len(batch) == 1 {
+				flushTimer.Reset(100 * time.Millisecond)
+			}
+
+			// Send immediately if batch is large enough (for high volume)
+			if len(batch) >= 50 {
+				flushTimer.Stop()
 				d.sendBatch(batch)
 				batch = nil
 			}
-		case <-ticker.C:
+
+		case <-flushTimer.C:
+			// Flush after 100ms even if batch is small
 			if len(batch) > 0 {
 				d.sendBatch(batch)
 				batch = nil
@@ -156,12 +187,19 @@ func (d *Daemon) sendBatch(events []types.Event) {
 		log.Printf("Failed to send %d events: %v", len(events), err)
 		// Events will be queued for retry by transport layer
 	} else {
-		log.Printf("Sent %d events", len(events))
+		if len(events) > 0 {
+			log.Printf("Sent %d events", len(events))
+		}
 	}
 }
 
 // Shutdown gracefully stops the daemon
 func (d *Daemon) Shutdown() error {
+	// Stop streaming collectors
+	for _, sc := range d.streamingCollectors {
+		sc.Stop()
+	}
+
 	d.wg.Wait()
 	return d.client.Close()
 }

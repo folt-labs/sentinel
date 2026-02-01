@@ -3,8 +3,11 @@ package auth
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -13,36 +16,40 @@ import (
 	"github.com/folt-labs/sentinel/agent/internal/types"
 )
 
-// SSHCollector monitors SSH authentication events
+// SSHCollector monitors SSH authentication events in real-time using journalctl --follow
 type SSHCollector struct {
-	logFiles      []string
-	lastPosition  map[string]int64
-	useJournald   bool
-	lastJournalTS time.Time
-	mu            sync.Mutex
+	logFiles    []string
+	useJournald bool
+	stateFile   string
+	eventChan   chan types.Event
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	cancel      context.CancelFunc
 }
 
-// Log patterns - match message CONTENT, not identifiers (works across all distros)
-var (
-	// SSH authentication patterns
-	sshAcceptedPattern = regexp.MustCompile(`Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)`)
-	sshFailedPattern   = regexp.MustCompile(`Failed\s+(\w+)\s+for\s+(?:invalid user\s+)?(\w+)\s+from\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)`)
-	sshInvalidUser     = regexp.MustCompile(`Invalid user\s+(\w+)\s+from\s+([\d\.:a-fA-F]+)`)
-	sshTooManyAuth     = regexp.MustCompile(`Disconnecting.*:\s+Too many authentication failures`)
-	sshConnectionClosed = regexp.MustCompile(`Connection closed by.*\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)\s+\[preauth\]`)
+// State persisted to disk for crash recovery
+type collectorState struct {
+	JournalCursor string    `json:"journal_cursor"`
+	LastTimestamp time.Time `json:"last_timestamp"`
+}
 
-	// Sudo patterns
-	sudoCommandPattern = regexp.MustCompile(`sudo:.*COMMAND=(.+)`)
-	sudoFailPattern    = regexp.MustCompile(`sudo:.*authentication failure|sudo:.*3 incorrect password attempts`)
+// Log patterns - match message CONTENT, works across all distros
+var (
+	sshAcceptedPattern  = regexp.MustCompile(`Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)`)
+	sshFailedPattern    = regexp.MustCompile(`Failed\s+(\w+)\s+for\s+(?:invalid user\s+)?(\w+)\s+from\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)`)
+	sshInvalidUser      = regexp.MustCompile(`Invalid user\s+(\w+)\s+from\s+([\d\.:a-fA-F]+)`)
+	sshTooManyAuth      = regexp.MustCompile(`Disconnecting.*:\s+Too many authentication failures`)
+	sshConnectionClosed = regexp.MustCompile(`Connection closed by.*\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)\s+\[preauth\]`)
+	sudoCommandPattern  = regexp.MustCompile(`sudo.*COMMAND=(.+)`)
+	sudoFailPattern     = regexp.MustCompile(`sudo.*authentication failure|sudo.*3 incorrect password attempts`)
 )
 
-// NewSSHCollector creates a new SSH log collector
+// NewSSHCollector creates a new real-time SSH log collector
 func NewSSHCollector(logFiles []string) *SSHCollector {
 	c := &SSHCollector{
-		logFiles:     logFiles,
-		lastPosition: make(map[string]int64),
-		// Start from 5 minutes ago to capture recent events on startup
-		lastJournalTS: time.Now().Add(-5 * time.Minute),
+		logFiles:  logFiles,
+		stateFile: "/var/lib/serverguard/ssh_collector_state.json",
+		eventChan: make(chan types.Event, 1000),
 	}
 
 	// Check if any log file exists, otherwise use journald
@@ -55,7 +62,6 @@ func NewSSHCollector(logFiles []string) *SSHCollector {
 	}
 
 	if !logFileExists {
-		// Check if journalctl is available
 		if _, err := exec.LookPath("journalctl"); err == nil {
 			c.useJournald = true
 		}
@@ -69,112 +75,215 @@ func (c *SSHCollector) Name() string {
 	return "ssh"
 }
 
-// Collect gathers SSH authentication events
+// Collect is called periodically but for streaming we return buffered events
 func (c *SSHCollector) Collect(ctx context.Context) ([]types.Event, error) {
+	var events []types.Event
+
+	// Drain all available events from the channel (non-blocking)
+	for {
+		select {
+		case event := <-c.eventChan:
+			events = append(events, event)
+		default:
+			// No more events available
+			return events, nil
+		}
+	}
+}
+
+// StartStreaming starts the real-time log streaming (call this once on startup)
+func (c *SSHCollector) StartStreaming(ctx context.Context) error {
+	if c.useJournald {
+		return c.streamFromJournald(ctx)
+	}
+	return c.streamFromFiles(ctx)
+}
+
+// streamFromJournald uses journalctl --follow for real-time streaming
+func (c *SSHCollector) streamFromJournald(ctx context.Context) error {
+	ctx, c.cancel = context.WithCancel(ctx)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				c.runJournalStream(ctx)
+				// If we get here, journalctl died - wait and restart
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+					// Reconnect
+				}
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (c *SSHCollector) runJournalStream(ctx context.Context) {
+	// Build journalctl command with --follow for real-time streaming
+	args := []string{
+		"--follow",          // Stream new entries
+		"--no-pager",        // Don't page output
+		"-o", "short-precise", // Precise timestamps
+		"-n", "100",         // Start with last 100 entries (catch recent events)
+	}
+
+	// Load saved cursor for crash recovery
+	state := c.loadState()
+	if state.JournalCursor != "" {
+		args = append(args, "--after-cursor="+state.JournalCursor)
+	} else {
+		// First run: start from 5 minutes ago
+		args = append(args, "--since=5 minutes ago")
+	}
+
+	// Pattern matching - get all potentially relevant logs
+	args = append(args, "--grep=sshd|sudo|Failed|Accepted|Invalid user|authentication")
+
+	c.cmd = exec.CommandContext(ctx, "journalctl", args...)
+
+	stdout, err := c.cmd.StdoutPipe()
+	if err != nil {
+		return
+	}
+
+	if err := c.cmd.Start(); err != nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	// Increase buffer size for long log lines
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Extract cursor from journal output if available
+		if strings.HasPrefix(line, "__CURSOR=") {
+			cursor := strings.TrimPrefix(line, "__CURSOR=")
+			c.saveState(collectorState{JournalCursor: cursor, LastTimestamp: time.Now()})
+			continue
+		}
+
+		// Parse and emit event
+		if event := c.parseLine(line); event != nil {
+			select {
+			case c.eventChan <- *event:
+			default:
+				// Channel full, drop oldest
+				select {
+				case <-c.eventChan:
+				default:
+				}
+				c.eventChan <- *event
+			}
+		}
+	}
+
+	c.cmd.Wait()
+}
+
+// streamFromFiles uses tail -F for real-time file streaming
+func (c *SSHCollector) streamFromFiles(ctx context.Context) error {
+	ctx, c.cancel = context.WithCancel(ctx)
+
+	for _, logFile := range c.logFiles {
+		if _, err := os.Stat(logFile); err == nil {
+			go c.tailFile(ctx, logFile)
+		}
+	}
+
+	return nil
+}
+
+func (c *SSHCollector) tailFile(ctx context.Context, path string) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			c.runTail(ctx, path)
+			// If tail dies, wait and restart
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+				// Reconnect
+			}
+		}
+	}
+}
+
+func (c *SSHCollector) runTail(ctx context.Context, path string) {
+	// Use tail -F (capital F follows through log rotation)
+	cmd := exec.CommandContext(ctx, "tail", "-F", "-n", "100", path)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if event := c.parseLine(line); event != nil {
+			select {
+			case c.eventChan <- *event:
+			default:
+				// Channel full, drop oldest
+				select {
+				case <-c.eventChan:
+				default:
+				}
+				c.eventChan <- *event
+			}
+		}
+	}
+
+	cmd.Wait()
+}
+
+// Stop stops the streaming
+func (c *SSHCollector) Stop() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.cmd != nil && c.cmd.Process != nil {
+		c.cmd.Process.Kill()
+	}
+}
+
+func (c *SSHCollector) loadState() collectorState {
+	var state collectorState
+	data, err := os.ReadFile(c.stateFile)
+	if err != nil {
+		return state
+	}
+	json.Unmarshal(data, &state)
+	return state
+}
+
+func (c *SSHCollector) saveState(state collectorState) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var events []types.Event
+	dir := filepath.Dir(c.stateFile)
+	os.MkdirAll(dir, 0755)
 
-	if c.useJournald {
-		journalEvents, err := c.collectFromJournald()
-		if err == nil {
-			events = append(events, journalEvents...)
-		}
-	} else {
-		for _, logFile := range c.logFiles {
-			fileEvents, err := c.processLogFile(logFile)
-			if err != nil {
-				continue
-			}
-			events = append(events, fileEvents...)
-		}
-	}
-
-	return events, nil
-}
-
-// collectFromJournald reads SSH events from systemd journal using pattern matching
-func (c *SSHCollector) collectFromJournald() ([]types.Event, error) {
-	since := c.lastJournalTS.Format("2006-01-02 15:04:05")
-	c.lastJournalTS = time.Now()
-
-	// Pattern-based matching - works on ALL distros regardless of syslog identifier
-	// Matches: Failed, Accepted, Invalid user, sudo, authentication failure
-	cmd := exec.Command("journalctl",
-		"--since", since,
-		"--no-pager",
-		"-q",
-		"--grep=Failed|Accepted|Invalid user|sudo:|authentication failure|Too many authentication",
-	)
-
-	output, err := cmd.Output()
-	if err != nil {
-		// Fallback: Some older journalctl versions don't support --grep
-		// Use identifier-based query as backup
-		cmd = exec.Command("journalctl",
-			"-t", "sshd",
-			"-t", "sshd-session",
-			"-t", "sshd-connection",
-			"-t", "sudo",
-			"--since", since,
-			"--no-pager", "-q",
-		)
-		output, err = cmd.Output()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var events []types.Event
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if event := c.parseLine(line); event != nil {
-			events = append(events, *event)
-		}
-	}
-
-	return events, nil
-}
-
-func (c *SSHCollector) processLogFile(path string) ([]types.Event, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	// Seek to last known position
-	lastPos := c.lastPosition[path]
-	if lastPos > 0 {
-		info, err := file.Stat()
-		if err != nil {
-			return nil, err
-		}
-		// Reset if file was truncated (log rotation)
-		if info.Size() < lastPos {
-			lastPos = 0
-		}
-		file.Seek(lastPos, 0)
-	}
-
-	var events []types.Event
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		event := c.parseLine(line)
-		if event != nil {
-			events = append(events, *event)
-		}
-	}
-
-	// Save current position
-	pos, _ := file.Seek(0, 1)
-	c.lastPosition[path] = pos
-
-	return events, scanner.Err()
+	data, _ := json.Marshal(state)
+	os.WriteFile(c.stateFile, data, 0644)
 }
 
 func (c *SSHCollector) parseLine(line string) *types.Event {
@@ -230,7 +339,7 @@ func (c *SSHCollector) parseLine(line string) *types.Event {
 		}
 	}
 
-	// Check for too many authentication failures (brute force indicator)
+	// Check for brute force (too many auth failures)
 	if sshTooManyAuth.MatchString(line) {
 		return &types.Event{
 			Type:      "ssh_brute_force",
@@ -243,7 +352,7 @@ func (c *SSHCollector) parseLine(line string) *types.Event {
 	}
 
 	// Check for sudo events
-	if strings.Contains(line, "sudo:") || strings.Contains(line, "sudo[") {
+	if strings.Contains(line, "sudo") {
 		return c.parseSudoLine(line)
 	}
 
@@ -267,7 +376,6 @@ func (c *SSHCollector) parseSudoLine(line string) *types.Event {
 
 	// Check for sudo command execution
 	if matches := sudoCommandPattern.FindStringSubmatch(line); matches != nil {
-		// Check for dangerous commands
 		severity := "info"
 		dangerousCommands := []string{"rm -rf", "chmod 777", "passwd", "useradd", "userdel", "visudo", "shutdown", "reboot", "mkfs", "dd if="}
 		for _, dangerous := range dangerousCommands {
@@ -288,7 +396,7 @@ func (c *SSHCollector) parseSudoLine(line string) *types.Event {
 		}
 	}
 
-	// Generic sudo auth failure check
+	// Generic sudo auth failure
 	if strings.Contains(line, "authentication failure") {
 		return &types.Event{
 			Type:      "sudo_auth_failed",
@@ -301,4 +409,19 @@ func (c *SSHCollector) parseSudoLine(line string) *types.Event {
 	}
 
 	return nil
+}
+
+// Ensure SSHCollector implements StreamingCollector interface
+var _ StreamingCollector = (*SSHCollector)(nil)
+
+// StreamingCollector interface for collectors that support real-time streaming
+type StreamingCollector interface {
+	StartStreaming(ctx context.Context) error
+	Stop()
+}
+
+// Helper to check if a collector supports streaming
+func IsStreamingCollector(c interface{}) (StreamingCollector, bool) {
+	sc, ok := c.(StreamingCollector)
+	return sc, ok
 }

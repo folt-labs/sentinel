@@ -147,16 +147,17 @@
   - Automatic reconnection with exponential backoff
   - Connection status indicator in dashboard
 - [x] **Real-time Events**:
-  - New security events broadcast instantly
+  - New security events broadcast instantly with FULL event data
+  - Events added directly to React Query cache (no refetch needed)
   - Alert creation/status changes broadcast
   - Server status changes (online/offline) broadcast
   - Server created/deleted broadcast
 - [x] **Dashboard Integration**:
   - WebSocket context provider for React
-  - Automatic React Query cache invalidation
+  - Direct cache updates for instant event display
+  - NO polling when WebSocket connected (30s fallback only when disconnected)
   - Toast notifications for new alerts
   - "Live" indicator in sidebar
-  - Fallback to 30s polling if WebSocket disconnects
 
 ---
 
@@ -180,16 +181,16 @@
 - [x] Alerts created from high-severity events
 - [x] Alert state machine (open → acknowledged → resolved)
 - [x] Server offline detection with alerts
+- [x] Alert deduplication/grouping (5-minute window)
 - [ ] Custom alert rules UI
 - [ ] Alert rule evaluation engine
-- [ ] Alert deduplication/grouping
 
 ### Dashboard Features
 - [x] Basic polling refresh (30s fallback)
 - [x] Event filtering/search
 - [x] WebSocket real-time updates
-- [ ] Date range picker for events
-- [ ] Metrics charts (CPU/Memory/Disk over time)
+- [x] Date range picker for events
+- [x] Metrics charts (CPU/Memory/Disk over time)
 
 ---
 
@@ -198,10 +199,10 @@
 ### Future Features
 - [x] Agent auto-update mechanism ✅ (v0.1.6)
 - [x] Agent CLI commands (status, update, help) ✅ (v0.1.6)
+- [x] Alert deduplication/grouping ✅ (5-minute dedup window)
+- [x] Metrics charts and graphs ✅ (CPU/Memory/Disk with Recharts)
+- [x] Date range picker for events ✅ (Quick filters + custom range)
 - [ ] Custom alert rules builder UI
-- [ ] Alert deduplication/grouping
-- [ ] Metrics charts and graphs
-- [ ] Date range picker for events
 
 ### Integrations
 - [ ] Slack notifications
@@ -378,13 +379,19 @@ SMTP_FROM=Sentinel <alerts@example.com>
 - `api/internal/services/notifications.go` - Email and webhook notification service
 - `api/internal/websocket/hub.go` - WebSocket connection hub and message broadcasting
 - `api/internal/websocket/handler.go` - WebSocket upgrade handler with JWT auth
+- `api/internal/database/migrations/002_alert_deduplication.sql` - Alert deduplication schema
+- Updated `api/internal/services/alerts.go` - FindOrCreateWithNotification for deduplication
+- Updated `api/internal/services/events.go` - GetMetrics and date filtering in GetByServer
+- Updated `api/internal/handlers/servers.go` - GetServerMetrics endpoint, date params for events
 
 ### Dashboard
 - `dashboard/src/lib/websocket.tsx` - WebSocket context provider and hook
+- `dashboard/src/components/MetricsChart.tsx` - Time-series chart for CPU/Memory/Disk usage
+- `dashboard/src/components/DateRangePicker.tsx` - Quick filters and custom date range selection
 - Updated `dashboard/src/app/(dashboard)/layout.tsx` - WebSocket provider and connection status
 - Updated `dashboard/src/app/(dashboard)/settings/page.tsx` - Full notification channel management
-- Updated `dashboard/src/app/(dashboard)/servers/[id]/page.tsx` - Event filtering and stats
-- Updated `dashboard/src/lib/api.ts` - Settings API client
+- Updated `dashboard/src/app/(dashboard)/servers/[id]/page.tsx` - Event filtering, stats, metrics chart, date picker
+- Updated `dashboard/src/lib/api.ts` - Metrics and date filtering API methods
 
 ---
 
@@ -397,5 +404,8 @@ SMTP_FROM=Sentinel <alerts@example.com>
 5. ~~Event search/filtering~~ Done
 6. ~~Security hardening~~ Done
 7. ~~WebSocket updates~~ Done
-8. **Deploy and test** - Push changes and verify on production
-9. **Metrics charts** - Add CPU/Memory/Disk graphs over time
+8. ~~Alert deduplication~~ Done
+9. ~~Metrics charts~~ Done
+10. ~~Date range picker~~ Done
+11. **Deploy and test** - Push changes and verify on production
+12. **Custom alert rules** - Build UI for custom alert rule creation

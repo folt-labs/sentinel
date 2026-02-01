@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { serversApi, type SecurityEvent } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
+import { useWebSocket } from "@/lib/websocket";
 import { cn, formatDate, formatRelativeTime, getSeverityColor, getStatusColor } from "@/lib/utils";
 import { MetricsChart } from "@/components/MetricsChart";
 import { DateRangePicker, type DateRange } from "@/components/DateRangePicker";
@@ -96,6 +97,7 @@ export default function ServerDetailPage() {
   const router = useRouter();
   const token = useAuthStore((s) => s.token);
   const queryClient = useQueryClient();
+  const { isConnected } = useWebSocket();
   const serverId = params.id as string;
 
   const [expandedEvent, setExpandedEvent] = useState<string | null>(null);
@@ -108,11 +110,14 @@ export default function ServerDetailPage() {
     label: "All time",
   });
 
+  // Only poll when WebSocket is disconnected (fallback)
+  const pollInterval = isConnected ? false : 30000;
+
   const { data: server, isLoading: serverLoading } = useQuery({
     queryKey: ["server", serverId],
     queryFn: () => serversApi.get(token!, serverId),
     enabled: !!token && !!serverId,
-    refetchInterval: 30000,
+    refetchInterval: pollInterval,
   });
 
   const { data: eventsData, isLoading: eventsLoading } = useQuery({
@@ -124,14 +129,14 @@ export default function ServerDetailPage() {
         endDate: dateRange.endDate || undefined,
       }),
     enabled: !!token && !!serverId,
-    refetchInterval: 30000,
+    refetchInterval: pollInterval,
   });
 
   const { data: metricsData, isLoading: metricsLoading } = useQuery({
     queryKey: ["server-metrics", serverId],
     queryFn: () => serversApi.getMetrics(token!, serverId),
     enabled: !!token && !!serverId,
-    refetchInterval: 60000,
+    refetchInterval: isConnected ? 60000 : 60000, // Metrics still poll every 60s (they're historical data)
   });
 
   const events = eventsData?.events || [];

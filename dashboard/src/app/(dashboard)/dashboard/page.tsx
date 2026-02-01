@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { dashboardApi, alertsApi, type DashboardSummary, type Alert } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
+import { useWebSocket } from "@/lib/websocket";
 import { cn, formatRelativeTime, getSeverityColor, getStatusColor } from "@/lib/utils";
 import Link from "next/link";
 
@@ -78,19 +79,23 @@ function RecentAlerts({ alerts }: { alerts: Alert[] }) {
 
 export default function DashboardPage() {
   const token = useAuthStore((s) => s.token);
+  const { isConnected } = useWebSocket();
+
+  // Only poll when WebSocket is disconnected (fallback)
+  const pollInterval = isConnected ? false : 30000;
 
   const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ["dashboard-summary"],
     queryFn: () => dashboardApi.getSummary(token!),
     enabled: !!token,
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: pollInterval,
   });
 
   const { data: alertsData, isLoading: alertsLoading } = useQuery({
     queryKey: ["alerts", "open"],
     queryFn: () => alertsApi.list(token!, "open"),
     enabled: !!token,
-    refetchInterval: 30000,
+    refetchInterval: pollInterval,
   });
 
   if (summaryLoading || alertsLoading) {

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { alertsApi, type Alert } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
+import { useWebSocket } from "@/lib/websocket";
 import { cn, formatDate, formatRelativeTime, getSeverityColor } from "@/lib/utils";
 
 function AlertCard({ alert }: { alert: Alert }) {
@@ -93,14 +94,18 @@ function AlertCard({ alert }: { alert: Alert }) {
 
 export default function AlertsPage() {
   const token = useAuthStore((s) => s.token);
+  const { isConnected } = useWebSocket();
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [severityFilter, setSeverityFilter] = useState<string>("");
+
+  // Only poll when WebSocket is disconnected (fallback)
+  const pollInterval = isConnected ? false : 30000;
 
   const { data, isLoading } = useQuery({
     queryKey: ["alerts", statusFilter, severityFilter],
     queryFn: () => alertsApi.list(token!, statusFilter, severityFilter),
     enabled: !!token,
-    refetchInterval: 30000,
+    refetchInterval: pollInterval,
   });
 
   return (

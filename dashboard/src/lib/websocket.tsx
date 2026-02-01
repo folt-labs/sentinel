@@ -4,12 +4,19 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, Re
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "./store";
 import { toast } from "sonner";
+import type { SecurityEvent } from "./api";
 
 type MessageType = "event" | "alert" | "server_status" | "server_created" | "server_deleted" | "dashboard";
 
 interface WebSocketMessage {
   type: MessageType;
   payload: Record<string, unknown>;
+}
+
+interface EventPayload {
+  server_id: string;
+  hostname: string;
+  events: SecurityEvent[];
 }
 
 interface WebSocketContextType {
@@ -94,11 +101,30 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
   const handleMessage = useCallback((message: WebSocketMessage) => {
     switch (message.type) {
-      case "event":
-        // Invalidate events queries
-        queryClient.invalidateQueries({ queryKey: ["server-events"] });
+      case "event": {
+        // Add events directly to cache for instant updates
+        const eventPayload = message.payload as unknown as EventPayload;
+        if (eventPayload.events && eventPayload.events.length > 0) {
+          const serverId = eventPayload.server_id;
+
+          // Update all server-events queries for this server
+          queryClient.setQueriesData(
+            { queryKey: ["server-events", serverId] },
+            (oldData: { events: SecurityEvent[]; total: number } | undefined) => {
+              if (!oldData) return oldData;
+              // Prepend new events to the list
+              const newEvents = [...eventPayload.events, ...oldData.events];
+              return {
+                events: newEvents,
+                total: oldData.total + eventPayload.events.length,
+              };
+            }
+          );
+        }
+        // Also invalidate dashboard summary for updated counts
         queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
         break;
+      }
 
       case "alert":
         // Invalidate alerts queries

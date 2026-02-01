@@ -98,12 +98,24 @@ func (h *Handler) IngestEvents(c fiber.Ctx) error {
 func (h *Handler) processEventsWithNotifications(orgID, serverID uuid.UUID, hostname string, events []services.AgentEvent) {
 	ctx := context.Background()
 
-	// Broadcast new events via WebSocket
+	// Broadcast new events via WebSocket with FULL event data
 	if h.wsHub != nil && len(events) > 0 {
+		// Convert events to format matching SecurityEvent for frontend
+		wsEvents := make([]map[string]interface{}, len(events))
+		for i, e := range events {
+			wsEvents[i] = map[string]interface{}{
+				"id":         uuid.New().String(), // Generate ID for display
+				"server_id":  serverID.String(),
+				"event_type": e.Type,
+				"severity":   e.Severity,
+				"timestamp":  e.Timestamp,
+				"data":       e.Data,
+			}
+		}
 		h.wsHub.Broadcast(orgID, websocket.MessageTypeEvent, map[string]interface{}{
 			"server_id": serverID.String(),
 			"hostname":  hostname,
-			"count":     len(events),
+			"events":    wsEvents,
 		})
 	}
 

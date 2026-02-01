@@ -6,6 +6,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { serversApi, type Server } from "@/lib/api";
 import { useAuthStore } from "@/lib/store";
+import { useWebSocket } from "@/lib/websocket";
 import { cn, formatRelativeTime, getStatusColor } from "@/lib/utils";
 
 function AddServerModal({
@@ -184,13 +185,17 @@ function ServerRow({ server }: { server: Server }) {
 
 export default function ServersPage() {
   const token = useAuthStore((s) => s.token);
+  const { isConnected } = useWebSocket();
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // Only poll when WebSocket is disconnected (fallback)
+  const pollInterval = isConnected ? false : 30000;
 
   const { data, isLoading } = useQuery({
     queryKey: ["servers"],
     queryFn: () => serversApi.list(token!),
     enabled: !!token,
-    refetchInterval: 30000,
+    refetchInterval: pollInterval,
   });
 
   return (
