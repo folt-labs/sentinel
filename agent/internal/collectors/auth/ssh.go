@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,11 +126,16 @@ func (c *SSHCollector) streamFromJournald(ctx context.Context) error {
 
 func (c *SSHCollector) runJournalStream(ctx context.Context) {
 	// Build journalctl command with --follow for real-time streaming
+	// Use unit filtering instead of --grep (more reliable across distros)
 	args := []string{
-		"--follow",          // Stream new entries
-		"--no-pager",        // Don't page output
+		"--follow",            // Stream new entries
+		"--no-pager",          // Don't page output
 		"-o", "short-precise", // Precise timestamps
-		"-n", "100",         // Start with last 100 entries (catch recent events)
+		"-n", "100",           // Start with last 100 entries (catch recent events)
+		"-u", "ssh",           // OpenSSH on some systems
+		"-u", "sshd",          // OpenSSH on most systems
+		"-u", "sshd-session",  // Raspberry Pi OS
+		"-u", "sudo",          // Sudo commands
 	}
 
 	// Load saved cursor for crash recovery
@@ -141,19 +147,20 @@ func (c *SSHCollector) runJournalStream(ctx context.Context) {
 		args = append(args, "--since=5 minutes ago")
 	}
 
-	// Pattern matching - get all potentially relevant logs
-	args = append(args, "--grep=sshd|sudo|Failed|Accepted|Invalid user|authentication")
-
 	c.cmd = exec.CommandContext(ctx, "journalctl", args...)
 
 	stdout, err := c.cmd.StdoutPipe()
 	if err != nil {
+		log.Printf("SSH collector: failed to get stdout pipe: %v", err)
 		return
 	}
 
 	if err := c.cmd.Start(); err != nil {
+		log.Printf("SSH collector: failed to start journalctl: %v", err)
 		return
 	}
+
+	log.Printf("SSH collector: started journalctl streaming")
 
 	scanner := bufio.NewScanner(stdout)
 	// Increase buffer size for long log lines
@@ -171,6 +178,7 @@ func (c *SSHCollector) runJournalStream(ctx context.Context) {
 
 		// Parse and emit event
 		if event := c.parseLine(line); event != nil {
+			log.Printf("SSH collector: parsed event type=%s severity=%s", event.Type, event.Severity)
 			select {
 			case c.eventChan <- *event:
 			default:
@@ -184,7 +192,9 @@ func (c *SSHCollector) runJournalStream(ctx context.Context) {
 		}
 	}
 
-	c.cmd.Wait()
+	if err := c.cmd.Wait(); err != nil {
+		log.Printf("SSH collector: journalctl exited: %v", err)
+	}
 }
 
 // streamFromFiles uses tail -F for real-time file streaming
