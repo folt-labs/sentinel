@@ -13,7 +13,7 @@
 | API | Running | https://api.folt-labs.com |
 | Database | PostgreSQL 16 | Raspberry Pi 3 (Docker) |
 | Tunnel | Cloudflare Tunnel | Active |
-| Agent | v0.1.3 Released | GitHub Releases |
+| Agent | v0.1.6 Released | GitHub Releases |
 | CI/CD | GitHub Actions | Auto-builds ARM64 images |
 
 ---
@@ -196,7 +196,8 @@
 ## What's NOT Done (Post-MVP)
 
 ### Future Features
-- [ ] Agent auto-update mechanism
+- [x] Agent auto-update mechanism ✅ (v0.1.6)
+- [x] Agent CLI commands (status, update, help) ✅ (v0.1.6)
 - [ ] Custom alert rules builder UI
 - [ ] Alert deduplication/grouping
 - [ ] Metrics charts and graphs
@@ -227,8 +228,13 @@ curl -sSL https://raw.githubusercontent.com/folt-labs/sentinel/main/install.sh |
 
 ### Update Agent to Latest Version
 ```bash
+# New way (v0.1.6+): Use CLI command
+sudo sentinel-agent update
+sudo systemctl restart sentinel-agent
+
+# Old way (manual):
 sudo systemctl stop sentinel-agent
-sudo curl -fsSL "https://github.com/folt-labs/sentinel/releases/download/v0.1.3/sentinel-agent-linux-arm64" -o /opt/sentinel/bin/sentinel-agent
+sudo curl -fsSL "https://github.com/folt-labs/sentinel/releases/download/v0.1.6/sentinel-agent-linux-arm64" -o /opt/sentinel/bin/sentinel-agent
 sudo chmod +x /opt/sentinel/bin/sentinel-agent
 sudo systemctl start sentinel-agent
 ```
@@ -349,8 +355,9 @@ SMTP_FROM=Sentinel <alerts@example.com>
 | SSH | `ssh_login_success` | info |
 | SSH | `ssh_login_failed` | warning/high |
 | SSH | `ssh_invalid_user` | warning |
-| SSH | `sudo_command` | info |
-| SSH | `sudo_auth_failed` | warning |
+| SSH | `ssh_brute_force` | high |
+| SSH | `sudo_command` | info/warning |
+| SSH | `sudo_auth_failed` | high |
 | File Integrity | `file_modified` | high |
 | File Integrity | `file_deleted` | high |
 | File Integrity | `file_created` | medium |

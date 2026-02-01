@@ -22,19 +22,27 @@ type SSHCollector struct {
 	mu            sync.Mutex
 }
 
-// Common SSH log patterns
+// Log patterns - match message CONTENT, not identifiers (works across all distros)
 var (
-	sshAcceptedPattern = regexp.MustCompile(`Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d\.]+)\s+port\s+(\d+)`)
-	sshFailedPattern   = regexp.MustCompile(`Failed\s+(\w+)\s+for\s+(?:invalid user\s+)?(\w+)\s+from\s+([\d\.]+)\s+port\s+(\d+)`)
-	sshInvalidUser     = regexp.MustCompile(`Invalid user\s+(\w+)\s+from\s+([\d\.]+)`)
+	// SSH authentication patterns
+	sshAcceptedPattern = regexp.MustCompile(`Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)`)
+	sshFailedPattern   = regexp.MustCompile(`Failed\s+(\w+)\s+for\s+(?:invalid user\s+)?(\w+)\s+from\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)`)
+	sshInvalidUser     = regexp.MustCompile(`Invalid user\s+(\w+)\s+from\s+([\d\.:a-fA-F]+)`)
+	sshTooManyAuth     = regexp.MustCompile(`Disconnecting.*:\s+Too many authentication failures`)
+	sshConnectionClosed = regexp.MustCompile(`Connection closed by.*\s+([\d\.:a-fA-F]+)\s+port\s+(\d+)\s+\[preauth\]`)
+
+	// Sudo patterns
+	sudoCommandPattern = regexp.MustCompile(`sudo:.*COMMAND=(.+)`)
+	sudoFailPattern    = regexp.MustCompile(`sudo:.*authentication failure|sudo:.*3 incorrect password attempts`)
 )
 
 // NewSSHCollector creates a new SSH log collector
 func NewSSHCollector(logFiles []string) *SSHCollector {
 	c := &SSHCollector{
-		logFiles:      logFiles,
-		lastPosition:  make(map[string]int64),
-		lastJournalTS: time.Now(),
+		logFiles:     logFiles,
+		lastPosition: make(map[string]int64),
+		// Start from 5 minutes ago to capture recent events on startup
+		lastJournalTS: time.Now().Add(-5 * time.Minute),
 	}
 
 	// Check if any log file exists, otherwise use journald
@@ -77,7 +85,6 @@ func (c *SSHCollector) Collect(ctx context.Context) ([]types.Event, error) {
 		for _, logFile := range c.logFiles {
 			fileEvents, err := c.processLogFile(logFile)
 			if err != nil {
-				// Log file might not exist on all systems
 				continue
 			}
 			events = append(events, fileEvents...)
@@ -87,20 +94,32 @@ func (c *SSHCollector) Collect(ctx context.Context) ([]types.Event, error) {
 	return events, nil
 }
 
-// collectFromJournald reads SSH events from systemd journal
+// collectFromJournald reads SSH events from systemd journal using pattern matching
 func (c *SSHCollector) collectFromJournald() ([]types.Event, error) {
-	// Get logs since last check
 	since := c.lastJournalTS.Format("2006-01-02 15:04:05")
 	c.lastJournalTS = time.Now()
 
-	// Query journald for sshd and sudo logs
-	cmd := exec.Command("journalctl", "-u", "ssh", "-u", "sshd", "-t", "sudo",
-		"--since", since, "--no-pager", "-q")
+	// Pattern-based matching - works on ALL distros regardless of syslog identifier
+	// Matches: Failed, Accepted, Invalid user, sudo, authentication failure
+	cmd := exec.Command("journalctl",
+		"--since", since,
+		"--no-pager",
+		"-q",
+		"--grep=Failed|Accepted|Invalid user|sudo:|authentication failure|Too many authentication",
+	)
+
 	output, err := cmd.Output()
 	if err != nil {
-		// Try alternative: query by syslog identifier
-		cmd = exec.Command("journalctl", "-t", "sshd", "-t", "sudo",
-			"--since", since, "--no-pager", "-q")
+		// Fallback: Some older journalctl versions don't support --grep
+		// Use identifier-based query as backup
+		cmd = exec.Command("journalctl",
+			"-t", "sshd",
+			"-t", "sshd-session",
+			"-t", "sshd-connection",
+			"-t", "sudo",
+			"--since", since,
+			"--no-pager", "-q",
+		)
 		output, err = cmd.Output()
 		if err != nil {
 			return nil, err
@@ -180,7 +199,6 @@ func (c *SSHCollector) parseLine(line string) *types.Event {
 	// Check for failed authentication
 	if matches := sshFailedPattern.FindStringSubmatch(line); matches != nil {
 		severity := "warning"
-		// Check for root login attempts
 		if matches[2] == "root" {
 			severity = "high"
 		}
@@ -212,8 +230,20 @@ func (c *SSHCollector) parseLine(line string) *types.Event {
 		}
 	}
 
+	// Check for too many authentication failures (brute force indicator)
+	if sshTooManyAuth.MatchString(line) {
+		return &types.Event{
+			Type:      "ssh_brute_force",
+			Severity:  "high",
+			Timestamp: now,
+			Data: map[string]interface{}{
+				"raw_log": line,
+			},
+		}
+	}
+
 	// Check for sudo events
-	if strings.Contains(line, "sudo:") {
+	if strings.Contains(line, "sudo:") || strings.Contains(line, "sudo[") {
 		return c.parseSudoLine(line)
 	}
 
@@ -223,10 +253,11 @@ func (c *SSHCollector) parseLine(line string) *types.Event {
 func (c *SSHCollector) parseSudoLine(line string) *types.Event {
 	now := time.Now()
 
-	if strings.Contains(line, "authentication failure") {
+	// Check for sudo authentication failure
+	if sudoFailPattern.MatchString(line) {
 		return &types.Event{
 			Type:      "sudo_auth_failed",
-			Severity:  "warning",
+			Severity:  "high",
 			Timestamp: now,
 			Data: map[string]interface{}{
 				"raw_log": line,
@@ -234,10 +265,34 @@ func (c *SSHCollector) parseSudoLine(line string) *types.Event {
 		}
 	}
 
-	if strings.Contains(line, "COMMAND=") {
+	// Check for sudo command execution
+	if matches := sudoCommandPattern.FindStringSubmatch(line); matches != nil {
+		// Check for dangerous commands
+		severity := "info"
+		dangerousCommands := []string{"rm -rf", "chmod 777", "passwd", "useradd", "userdel", "visudo", "shutdown", "reboot", "mkfs", "dd if="}
+		for _, dangerous := range dangerousCommands {
+			if strings.Contains(matches[1], dangerous) {
+				severity = "warning"
+				break
+			}
+		}
+
 		return &types.Event{
 			Type:      "sudo_command",
-			Severity:  "info",
+			Severity:  severity,
+			Timestamp: now,
+			Data: map[string]interface{}{
+				"command": matches[1],
+				"raw_log": line,
+			},
+		}
+	}
+
+	// Generic sudo auth failure check
+	if strings.Contains(line, "authentication failure") {
+		return &types.Event{
+			Type:      "sudo_auth_failed",
+			Severity:  "warning",
 			Timestamp: now,
 			Data: map[string]interface{}{
 				"raw_log": line,

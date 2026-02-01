@@ -286,6 +286,11 @@ set_permissions() {
     chown -R $SERVICE_USER:$SERVICE_USER /var/log/serverguard
     chown root:$SERVICE_USER $CONFIG_DIR/agent.yaml
 
+    # Make binary accessible to all users for CLI commands
+    chmod 755 $INSTALL_DIR
+    chmod 755 $INSTALL_DIR/bin
+    chmod 755 $INSTALL_DIR/bin/sentinel-agent
+
     log_info "Permissions set"
 }
 
